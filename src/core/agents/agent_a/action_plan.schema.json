@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ActionPlan",
+  "type": "object",
+  "required": [
+    "intent",
+    "actions",
+    "target",
+    "params",
+    "confidence",
+    "requires_confirmation",
+    "file_scope"
+  ],
+  "properties": {
+    "intent": {
+      "type": "string",
+      "minLength": 1
+    },
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "action_type",
+          "target",
+          "params",
+          "confidence",
+          "requires_confirmation"
+        ],
+        "properties": {
+          "action_type": {
+            "type": "string",
+            "enum": [
+              "bold_heading",
+              "insert_page_number",
+              "unify_style",
+              "reorder_paragraphs",
+              "batch_format",
+              "extract_content",
+              "replace_text",
+              "insert_toc",
+              "auto_column_width",
+              "freeze_header_row",
+              "clear_document_content",
+              "remove_blank_lines",
+              "set_font_family",
+              "set_font_color",
+              "set_font_size",
+              "set_paragraph_alignment",
+              "set_line_spacing",
+              "set_first_line_indent",
+              "set_highlight",
+              "insert_table",
+              "insert_footer_text",
+              "set_heading_numbering"
+            ]
+          },
+          "target": {
+            "type": "object"
+          },
+          "params": {
+            "type": "object"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "requires_confirmation": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "target": {
+      "type": "object"
+    },
+    "params": {
+      "type": "object"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "requires_confirmation": {
+      "type": "boolean"
+    },
+    "file_scope": {
+      "type": "string",
+      "enum": ["md", "xlsx", "docx", "txt", "all"]
+    }
+  },
+  "additionalProperties": false
+}
