@@ -7,6 +7,11 @@ contextBridge.exposeInMainWorld('docIntelDesktop', {
   kind: 'electron',
   dialog: {
     pickDirectory: () => ipcRenderer.invoke('dialog:pickDirectory'),
+    saveFile: (opts) => ipcRenderer.invoke('dialog:saveFile', opts),
+    saveFileFromBuffer: (opts) => ipcRenderer.invoke('dialog:saveFileFromBuffer', opts),
+  },
+  shell: {
+    openPath: (targetPath) => ipcRenderer.invoke('shell:openPath', targetPath),
   },
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),

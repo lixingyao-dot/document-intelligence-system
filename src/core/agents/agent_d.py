@@ -4,8 +4,9 @@ Agent_D: Excel 数据筛选与填表 Agent。
 
 职责：
 - 从 Excel（.xlsx）读取表格数据
-- 根据用户自然语言/参数生成筛选计划并筛选行
-- 输出筛选结果为 JSON
+- 有模板时优先读取模板表头，再在数据源中匹配对应列并取数
+- 根据用户自然语言/参数生成筛选计划并筛选行（筛选范围限定为已映射列）
+- 输出筛选结果为 JSON（键名为模板列名）
 - 将结果按字段映射填入 Excel/Word 模板（支持单表/多表）
 """
 from __future__ import annotations
@@ -26,6 +27,18 @@ from config import SystemConfig, get_config
 from core.orchestrator.task_spec import TaskSpec, TaskType, FileInfo, FileType
 from core.llm.llm_service import get_llm_service
 from utils.logger import get_logger
+
+# 仅填表、无具体筛选语义（如「进行填表」）→ 使用全部数据行
+_FILL_ONLY_INSTRUCTION_RE = re.compile(
+    r"^(?:进行)?填表$|^填入模板$|^写入模板$|^套用到?模板$",
+    re.IGNORECASE,
+)
+_FILTER_HINT_KEYWORDS = (
+    "筛选", "过滤", "条件", "大于", "小于", "不少于", "不超过", "之间",
+    "从", "到", "等于", "包含", "不包含", "排除", "为空", "非空",
+    "年", "月", "日", "号", ">", "<", "=", "≥", "≤",
+    "between", "and", "or",
+)
 
 
 class AgentB(BaseAgent):
@@ -93,7 +106,11 @@ class AgentB(BaseAgent):
 
         table_targets = self._get_table_targets(task_spec.parameters)
         instruction = self._resolve_instruction(task_spec)
-        if not instruction and not table_targets:
+        has_fill_template = bool(
+            task_spec.template_file
+            and self._is_supported_template(task_spec.template_file.path)
+        )
+        if not instruction and not table_targets and not has_fill_template:
             return AgentResponse(success=False, message="缺少筛选条件描述，请在 instruction 或 parameters 中提供")
 
         rows, columns = self._read_excel_rows(excel_path, task_spec.parameters)
@@ -206,7 +223,20 @@ class AgentB(BaseAgent):
                 }
             )
 
-        # 单表模式（原逻辑）
+        # 单表 + 模板：先读模板字段 → 在数据源中找对应列 → 筛选/取数 → 填表
+        if has_fill_template and not table_targets:
+            return self._extract_entities_template_first(
+                task_spec=task_spec,
+                excel_path=excel_path,
+                rows=rows,
+                columns=columns,
+                instruction=instruction,
+                source_path=source_path,
+                source_dir=source_dir,
+                default_json_output=default_json_output,
+            )
+
+        # 无模板：仅按条件筛选并导出 JSON
         field_candidates = self._extract_field_candidates(instruction, columns)
         plan = self._build_filter_plan_with_llm(instruction, columns, field_candidates)
         llm_has_conditions = bool(plan.get("conditions"))
@@ -223,49 +253,142 @@ class AgentB(BaseAgent):
         if not has_conditions and not has_groups:
             return AgentResponse(
                 success=False,
-                message="LLM未生成可执行筛选计划，请检查模型配置或补充更明确条件"
+                message="LLM未生成可执行筛选计划，请检查模型配置或补充更明确条件",
             )
 
         filtered_rows = self._apply_filter_plan(rows, plan)
         output_path = self._write_rows_to_json(filtered_rows, task_spec.output_file or default_json_output)
 
-        template_output_path = None
-        column_mapping: Dict[str, str] = {}
-        if task_spec.template_file and self._is_supported_template(task_spec.template_file.path):
-            template_path = task_spec.template_file.path
-            template_columns = self._read_template_columns(template_path, task_spec.parameters)
-            column_mapping = self._build_template_column_mapping(
-                source_columns=columns,
-                template_columns=template_columns,
-                source_rows=rows,
-                parameters=task_spec.parameters,
+        if len(filtered_rows) == 0:
+            summary = (
+                f"筛选完成，共命中 0 行。请补充具体筛选条件（如日期范围、字段条件）；"
+                f"当前描述「{instruction}」未匹配到任何数据。"
             )
-            if self._is_excel_template(template_path):
-                task_spec.parameters.setdefault(
-                    "template_output_file",
-                    str(source_dir / f"{source_path.stem}_filled{Path(template_path).suffix.lower() or '.xlsx'}"),
-                )
-                template_output_path = self._fill_excel_template(
-                    filtered_rows=filtered_rows,
-                    template_path=template_path,
-                    mapping=column_mapping,
-                    parameters=task_spec.parameters,
-                )
-            else:
-                task_spec.parameters.setdefault(
-                    "template_output_file",
-                    str(source_dir / f"{source_path.stem}_filled{Path(template_path).suffix.lower() or '.docx'}"),
-                )
-                template_output_path = self._fill_docx_template(
-                    filtered_rows=filtered_rows,
-                    template_path=template_path,
-                    mapping=column_mapping,
-                    parameters=task_spec.parameters,
-                )
+        else:
+            summary = f"筛选完成，共命中 {len(filtered_rows)} 行"
 
         return AgentResponse(
             success=True,
-            message=f"筛选完成，共命中 {len(filtered_rows)} 行",
+            message=summary,
+            data={
+                "status": "completed",
+                "excel_path": excel_path,
+                "output_json": output_path,
+                "total_rows": len(rows),
+                "matched_rows": len(filtered_rows),
+                "used_plan": plan,
+                "field_candidates": field_candidates,
+                "plan_source": plan_source,
+                "template_filled": False,
+                "template_output": None,
+                "template_mapping": {},
+            },
+        )
+
+    def _extract_entities_template_first(
+        self,
+        task_spec: TaskSpec,
+        excel_path: str,
+        rows: List[Dict[str, Any]],
+        columns: List[str],
+        instruction: str,
+        source_path: Path,
+        source_dir: Path,
+        default_json_output: str,
+    ) -> AgentResponse:
+        """模板优先：读模板表头 → 映射数据源列 → 按条件取行 → 填入模板。"""
+        template_path = task_spec.template_file.path
+        template_columns = self._read_template_columns(template_path, task_spec.parameters)
+        if not template_columns:
+            return AgentResponse(success=False, message="模板中未读取到表头列，请检查模板格式")
+
+        column_mapping = self._build_template_column_mapping(
+            source_columns=columns,
+            template_columns=template_columns,
+            source_rows=rows,
+            parameters=task_spec.parameters,
+        )
+        mapped_source_cols = list(dict.fromkeys(column_mapping.values()))
+        if not mapped_source_cols:
+            return AgentResponse(
+                success=False,
+                message="未能将模板表头与数据源列建立映射，请检查两边列名是否一致",
+            )
+
+        fill_fields = [
+            t_col
+            for t_col in column_mapping
+            if not self._is_placeholder_template_column(t_col)
+        ]
+        field_candidates = self._extract_field_candidates(instruction, mapped_source_cols)
+        fill_all = self._should_fill_all_rows(instruction, task_spec, [])
+
+        if fill_all:
+            filtered_rows = list(rows)
+            plan: Dict[str, Any] = {}
+            plan_source = "template_first_fill_all"
+        else:
+            plan = self._build_filter_plan_with_llm(instruction, mapped_source_cols, field_candidates)
+            llm_has_conditions = bool(plan.get("conditions"))
+            llm_has_groups = bool(plan.get("groups"))
+            plan_source = "template_first_llm"
+
+            allow_rule_fallback = bool(task_spec.parameters.get("allow_rule_fallback", True))
+            if (not llm_has_conditions and not llm_has_groups) and allow_rule_fallback:
+                plan = self._build_filter_plan_fallback(instruction, mapped_source_cols)
+                plan_source = "template_first_rule_fallback"
+
+            has_conditions = bool(plan.get("conditions"))
+            has_groups = bool(plan.get("groups"))
+            if not has_conditions and not has_groups:
+                return AgentResponse(
+                    success=False,
+                    message="无法根据描述生成筛选计划；请补充日期/字段条件，或使用「进行填表」写入全部数据行",
+                )
+
+            filtered_rows = self._apply_filter_plan(rows, plan)
+
+        json_rows = self._project_rows_by_mapping(filtered_rows, column_mapping)
+        output_path = self._write_rows_to_json(json_rows, task_spec.output_file or default_json_output)
+
+        template_output_path = None
+        if self._is_excel_template(template_path):
+            task_spec.parameters.setdefault(
+                "template_output_file",
+                str(source_dir / f"{source_path.stem}_filled{Path(template_path).suffix.lower() or '.xlsx'}"),
+            )
+            template_output_path = self._fill_excel_template(
+                filtered_rows=filtered_rows,
+                template_path=template_path,
+                mapping=column_mapping,
+                parameters=task_spec.parameters,
+            )
+        else:
+            task_spec.parameters.setdefault(
+                "template_output_file",
+                str(source_dir / f"{source_path.stem}_filled{Path(template_path).suffix.lower() or '.docx'}"),
+            )
+            template_output_path = self._fill_docx_template(
+                filtered_rows=filtered_rows,
+                template_path=template_path,
+                mapping=column_mapping,
+                parameters=task_spec.parameters,
+            )
+
+        field_count = len(fill_fields) or len(column_mapping)
+        if fill_all:
+            summary = f"填表完成：按模板 {field_count} 个字段写入 {len(filtered_rows)} 行"
+        elif len(filtered_rows) == 0:
+            summary = (
+                f"筛选后 0 行，未写入模板。已按模板字段在数据源中查找，"
+                f"当前条件「{instruction}」无匹配；请调整筛选描述。"
+            )
+        else:
+            summary = f"填表完成：按模板 {field_count} 个字段写入 {len(filtered_rows)} 行（已筛选）"
+
+        return AgentResponse(
+            success=True,
+            message=summary,
             data={
                 "status": "completed",
                 "excel_path": excel_path,
@@ -278,8 +401,25 @@ class AgentB(BaseAgent):
                 "template_filled": bool(template_output_path),
                 "template_output": template_output_path,
                 "template_mapping": column_mapping,
-            }
+                "template_columns": template_columns,
+                "mapped_source_columns": mapped_source_cols,
+            },
         )
+
+    @staticmethod
+    def _is_placeholder_template_column(column_name: str) -> bool:
+        return bool(re.match(r"^template_col_\d+$", str(column_name or "").strip(), re.IGNORECASE))
+
+    @staticmethod
+    def _project_rows_by_mapping(
+        rows: List[Dict[str, Any]],
+        mapping: Dict[str, str],
+    ) -> List[Dict[str, Any]]:
+        """将数据源行投影为以模板列名为键的字典（用于 JSON 导出）。"""
+        projected: List[Dict[str, Any]] = []
+        for row in rows:
+            projected.append({t_col: row.get(s_col) for t_col, s_col in mapping.items()})
+        return projected
 
     def _get_table_targets(self, parameters: Dict[str, Any]) -> List[Dict[str, Any]]:
         targets = parameters.get("table_targets", []) if parameters else []
@@ -355,6 +495,28 @@ class AgentB(BaseAgent):
             or str(task_spec.parameters.get("filter_condition", ""))
             or str(task_spec.parameters.get("query", ""))
         ).strip()
+
+    def _should_fill_all_rows(
+        self,
+        instruction: str,
+        task_spec: TaskSpec,
+        table_targets: List[Dict[str, Any]],
+    ) -> bool:
+        """有模板且用户未给出可执行筛选条件时，默认写入全部数据行。"""
+        if table_targets:
+            return False
+        if not task_spec.template_file:
+            return False
+        text = (instruction or "").strip()
+        if not text:
+            return True
+        if _FILL_ONLY_INSTRUCTION_RE.match(text):
+            return True
+        if any(kw in text for kw in _FILTER_HINT_KEYWORDS):
+            return False
+        if re.search(r"填|写入|导入|套用|模板", text, re.IGNORECASE):
+            return True
+        return False
 
     def _read_excel_rows(self, excel_path: str, parameters: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[str]]:
         sheet_name = str(parameters.get("sheet_name", "")).strip() if parameters else ""

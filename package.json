@@ -1,6 +1,6 @@
 {
   "name": "document-intelligence-desktop-electron",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "description": "文档智能系统 · Electron 桌面版",
   "author": "Document Intelligence",
   "private": true,

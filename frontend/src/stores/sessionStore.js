@@ -45,6 +45,70 @@ function getFileCategory(fileName) {
   return 'unknown'
 }
 
+function isTemplateFileMeta(f) {
+  if (!f) return false
+  if (String(f.file_type || '').toLowerCase() === 'template') return true
+  return /模板|template/i.test(String(f.file_name || ''))
+}
+
+/** 数据源 Excel + 模板 → 走 table_filling 直达填表（避免混合模式只出 JSON） */
+function shouldDirectTableFill(files, template_files, content = '') {
+  const tpls = (template_files || []).filter(Boolean)
+  if (!tpls.length) return false
+  const dataExcel = (files || []).filter(
+    (f) => getFileCategory(f?.file_name) === 'excel' && !isTemplateFileMeta(f),
+  )
+  if (!dataExcel.length) return false
+  const docFiles = (files || []).filter((f) => getFileCategory(f?.file_name) === 'document')
+  const fillIntent = /填|写入|导入|套用|模板|合并|同步/.test(String(content || ''))
+  // 仅 Excel 数据源 + 模板（无 PDF 等文档）时直接填表
+  if (docFiles.length === 0) return true
+  // 同时有文档时交给混合模式（先提取再填表）
+  if (docFiles.length > 0) return false
+  return fillIntent
+}
+
+function tableFillHasFilledOutput(generated_files, tableData) {
+  const list = [
+    ...normalizeGeneratedFiles(generated_files),
+    ...normalizeGeneratedFiles(tableData?.generated_files),
+    ...fallbackGeneratedFilesFromTableData(tableData),
+  ]
+  return list.some((f) => {
+    const name = String(f?.file_name || '').toLowerCase()
+    const ft = String(f?.file_type || '').toLowerCase()
+    return ['xlsx', 'xls', 'docx', 'doc'].includes(ft) || /\.(xlsx|xls|docx|doc)$/.test(name)
+  })
+}
+
+function expandTableFillPrompt(content) {
+  const t = String(content || '').trim()
+  if (!t || /^(进行)?填表$/.test(t)) {
+    return '先读取模板表头确定要填的字段，再从数据源按列名取对应数据并填入模板；若无额外筛选条件，使用全部数据行。'
+  }
+  if (/填|写入|套用|导入/.test(t) && !/筛选|过滤|大于|小于|从.*到|包含|等于|\d{4}/.test(t)) {
+    return `${t}（先按模板字段在数据源中匹配列；若无额外筛选条件，使用全部数据行）`
+  }
+  return t
+}
+
+function finalizeTableFillProgressMessage(progressMsg, result, template_files, labels) {
+  if (!progressMsg) return
+  const tf = result?.resp?.tableFillingData || progressMsg.tableFillingData
+  const files = normalizeGeneratedFiles(result?.generated_files)
+  const filled = tableFillHasFilledOutput(files, tf)
+  const baseMsg = String(tf?.message || '').trim()
+  if (filled) {
+    progressMsg.content = `填表完成：已将「${labels.src}」写入模板「${labels.tpl}」`
+  } else if ((template_files || []).length) {
+    progressMsg.content =
+      baseMsg ||
+      `未能生成填好的 Excel，仅输出筛选 JSON。请确认模板列名与数据源一致，并在「模板」栏勾选 ${labels.tpl}。`
+  } else if (baseMsg) {
+    progressMsg.content = baseMsg
+  }
+}
+
 function saveSessionsCache(sessions, currentSessionId) {
   writeCache(SESSIONS_KEY, { sessions, currentSessionId })
 }
@@ -162,6 +226,23 @@ function fallbackGeneratedFilesFromTableData(tableData) {
   return out
 }
 
+function fallbackGeneratedFilesFromDocumentEditing(data) {
+  if (!data || typeof data !== 'object') return []
+  const existing = normalizeGeneratedFiles(data.generated_files || data.generatedFiles)
+  if (existing.length > 0) return existing
+  const outputFile = data.output_file || data.outputFile
+  if (!outputFile) return []
+  const path = String(outputFile)
+  const suffix = path.split(/[\\/]/).pop()?.split('.').pop()
+  return [
+    {
+      file_path: path,
+      file_name: path.split(/[\\/]/).pop() || `edited.${suffix || 'docx'}`,
+      download_label: '编辑后的文档',
+    },
+  ]
+}
+
 async function loadJsonRowsFromArtifacts(sessionId, tableData, generatedFiles = []) {
   const candidates = []
   const outputJson = tableData?.output_json || tableData?.outputJson
@@ -247,6 +328,22 @@ function normalizeMessageForResultDisplay(msg) {
     }
   }
 
+  const de =
+    normalized.documentEditingData ||
+    metadata.documentEditingData ||
+    metadata.document_editing_data
+  if (de && typeof de === 'object') {
+    const deGenerated = normalizeGeneratedFiles(de.generated_files || de.generatedFiles)
+    const deFallback = fallbackGeneratedFilesFromDocumentEditing(de)
+    normalized.documentEditingData = {
+      ...de,
+      generated_files: deGenerated.length > 0 ? deGenerated : deFallback,
+    }
+    if (!normalized.generated_files?.length && normalized.documentEditingData.generated_files?.length) {
+      normalized.generated_files = normalized.documentEditingData.generated_files
+    }
+  }
+
   normalized.metadata = metadata
   return normalized
 }
@@ -328,20 +425,119 @@ export const useSessionStore = defineStore('session', () => {
 
   function getSelectedFilesPayload() {
     const fileStore = useFileStore()
-    const files = fileStore.tempFiles.data
-      .filter((f) => f.is_selected)
+    const selected = (list) => list.filter((f) => f.is_selected)
+
+    const tempDataFiles = selected(fileStore.tempFiles.data).filter((f) => f.original_file)
+    const tempTemplateFiles = selected(fileStore.tempFiles.template).filter((f) => f.original_file)
+
+    const libraryDataFiles = selected(fileStore.tempFiles.data)
+      .filter((f) => f.library_doc_id && !f.original_file)
       .map(mapLibraryFileForPayload)
-    const template_files = fileStore.tempFiles.template
-      .filter((f) => f.is_selected)
+    const libraryTemplateFiles = selected(fileStore.tempFiles.template)
+      .filter((f) => f.library_doc_id && !f.original_file)
       .map((f) => mapLibraryFileForPayload({ ...f, file_type: 'template' }))
 
+    const uploadedDataFiles = selected(fileStore.tempFiles.data)
+      .filter((f) => !f.original_file && !f.library_doc_id && (f.file_path || f.storage_key))
+      .map((f) => ({
+        id: f.id,
+        file_name: f.file_name,
+        file_path: f.file_path,
+        storage_key: f.storage_key || f.file_path,
+        file_size: f.file_size,
+        file_type: f.file_type || 'data',
+        is_selected: true,
+      }))
+    const uploadedTemplateFiles = selected(fileStore.tempFiles.template)
+      .filter((f) => !f.original_file && !f.library_doc_id && (f.file_path || f.storage_key))
+      .map((f) => ({
+        id: f.id,
+        file_name: f.file_name,
+        file_path: f.file_path,
+        storage_key: f.storage_key || f.file_path,
+        file_size: f.file_size,
+        file_type: 'template',
+        is_selected: true,
+      }))
+
     return {
-      tempFiles: [],
-      tempTemplateFiles: [],
-      files,
-      template_files,
-      output_space_id: fileStore.outputSpaceId || '',
+      tempFiles: tempDataFiles.map((f) => ({ ...f })),
+      tempTemplateFiles: tempTemplateFiles.map((f) => ({ ...f })),
+      files: [...libraryDataFiles, ...uploadedDataFiles],
+      template_files: [...libraryTemplateFiles, ...uploadedTemplateFiles],
     }
+  }
+
+  async function uploadTempFiles(tempDataFiles, tempTemplateFiles, onProgress) {
+    const fileStore = useFileStore()
+    const uploadedFiles = []
+    const uploadedTemplateFiles = []
+    const allFiles = [...tempDataFiles, ...tempTemplateFiles]
+    let uploadedCount = 0
+
+    for (const file of tempDataFiles) {
+      try {
+        const res = await fileApi.upload(currentSessionId.value, file.original_file, 'data')
+        uploadedCount++
+        onProgress?.(uploadedCount, allFiles.length)
+        const filePath = res.file_path || res.path || res.storage_key || ''
+        const updatedFileInfo = {
+          id: res.id,
+          file_name: res.file_name || file.file_name,
+          file_path: filePath,
+          storage_key: filePath,
+          file_size: res.file_size || file.file_size,
+          file_type: 'data',
+          is_selected: true,
+          created_at: res.created_at || new Date().toISOString(),
+        }
+        const index = fileStore.tempFiles.data.findIndex((f) => f.id === file.id)
+        if (index > -1) {
+          const prev = fileStore.tempFiles.data[index]
+          const u = prev?.file_url
+          if (u && String(u).startsWith('blob:')) {
+            try { URL.revokeObjectURL(u) } catch (_) {}
+          }
+          fileStore.tempFiles.data[index] = updatedFileInfo
+        }
+        uploadedFiles.push(updatedFileInfo)
+      } catch (e) {
+        console.error('[uploadTempFiles] 上传数据文件失败:', e)
+      }
+    }
+
+    for (const file of tempTemplateFiles) {
+      try {
+        const res = await fileApi.upload(currentSessionId.value, file.original_file, 'template')
+        uploadedCount++
+        onProgress?.(uploadedCount, allFiles.length)
+        const filePath = res.file_path || res.path || res.storage_key || ''
+        const updatedTemplateInfo = {
+          id: res.id,
+          file_name: res.file_name || file.file_name,
+          file_path: filePath,
+          storage_key: filePath,
+          file_size: res.file_size || file.file_size,
+          file_type: 'template',
+          is_selected: true,
+          created_at: res.created_at || new Date().toISOString(),
+        }
+        const index = fileStore.tempFiles.template.findIndex((f) => f.id === file.id)
+        if (index > -1) {
+          const prev = fileStore.tempFiles.template[index]
+          const u = prev?.file_url
+          if (u && String(u).startsWith('blob:')) {
+            try { URL.revokeObjectURL(u) } catch (_) {}
+          }
+          fileStore.tempFiles.template[index] = updatedTemplateInfo
+        }
+        uploadedTemplateFiles.push(updatedTemplateInfo)
+      } catch (e) {
+        console.error('[uploadTempFiles] 上传模板文件失败:', e)
+      }
+    }
+
+    return { uploadedFiles, uploadedTemplateFiles }
   }
 
   // 清除所有选中的文件（仅本地缓冲区，不请求后端）
@@ -717,7 +913,7 @@ export const useSessionStore = defineStore('session', () => {
           showProgressBar.value = true
           progressValue.value = 0
           progressMessage.value = data.result_type === 'table_filling' || data.mode === 'table_filling'
-            ? '开始筛选数据...'
+            ? '正在将数据填入模板...'
             : '开始提取...'
         }
       } else if (data.type === 'progress') {
@@ -817,6 +1013,48 @@ export const useSessionStore = defineStore('session', () => {
           } catch (e) {
             console.error('[WebSocket onmessage] 解析表格填表结果失败:', e)
           }
+        } else if (data.result_type === 'document_editing') {
+          try {
+            let parsed = null
+            if (typeof data.content === 'string') {
+              parsed = JSON.parse(data.content)
+            } else if (data.content && typeof data.content === 'object') {
+              parsed = data.content
+            }
+            if (!parsed || typeof parsed !== 'object') {
+              throw new Error('document_editing chunk 内容不是有效对象')
+            }
+            const normalizedChunkFiles = normalizeGeneratedFiles(
+              parsed.generated_files || parsed.generatedFiles
+            )
+            const fallbackFiles = fallbackGeneratedFilesFromDocumentEditing(parsed)
+            if (normalizedChunkFiles.length > 0) {
+              parsed.generated_files = normalizedChunkFiles
+            } else if (fallbackFiles.length > 0) {
+              parsed.generated_files = fallbackFiles
+            }
+            const summary = String(parsed.message || '文档编辑完成').trim()
+            const lastMsg = messages.value[messages.value.length - 1]
+            if (lastMsg && lastMsg.role === 'assistant') {
+              lastMsg.content = summary
+              lastMsg.documentEditingData = parsed
+              if (parsed.generated_files?.length) {
+                lastMsg.generated_files = parsed.generated_files
+              }
+            } else {
+              messages.value.push({
+                id: createMessageId('assistant'),
+                role: 'assistant',
+                content: summary,
+                created_at: new Date().toISOString(),
+                documentEditingData: parsed,
+                generated_files: parsed.generated_files || [],
+              })
+            }
+            pendingResultData = { documentEditingData: parsed }
+          } catch (e) {
+            console.error('[WebSocket onmessage] 解析文档编辑结果失败:', e)
+          }
         } else {
           // 普通流式文本
           const lastMsg = messages.value[messages.value.length - 1]
@@ -843,13 +1081,30 @@ export const useSessionStore = defineStore('session', () => {
           data.generated_files || data.generatedFiles || data.output_files
         )
         const pendingTableData = pendingResultData?.tableFillingData
+        const pendingDocEditData = pendingResultData?.documentEditingData
         const pendingTableFiles = normalizeGeneratedFiles(
           pendingTableData?.generated_files || pendingTableData?.generatedFiles
         )
+        const pendingDocEditFiles = normalizeGeneratedFiles(
+          pendingDocEditData?.generated_files || pendingDocEditData?.generatedFiles
+        )
         const pendingFallbackFiles = fallbackGeneratedFilesFromTableData(pendingTableData)
-        const finalGeneratedFiles = normalizedDoneFiles.length > 0
-          ? normalizedDoneFiles
-          : (pendingTableFiles.length > 0 ? pendingTableFiles : pendingFallbackFiles)
+        const pendingDocEditFallback = fallbackGeneratedFilesFromDocumentEditing(pendingDocEditData)
+        const doneDocEditData = data.document_editing_data || data.documentEditingData
+        const doneDocEditFallback = fallbackGeneratedFilesFromDocumentEditing(doneDocEditData)
+        let finalGeneratedFiles = normalizedDoneFiles
+        if (!finalGeneratedFiles.length) {
+          finalGeneratedFiles =
+            pendingDocEditFiles.length > 0
+              ? pendingDocEditFiles
+              : pendingDocEditFallback.length > 0
+                ? pendingDocEditFallback
+                : doneDocEditFallback
+        }
+        if (!finalGeneratedFiles.length) {
+          finalGeneratedFiles =
+            pendingTableFiles.length > 0 ? pendingTableFiles : pendingFallbackFiles
+        }
         // 把 generated_files 存入最后一条助手消息
         if (finalGeneratedFiles.length > 0) {
           let lastMsg = messages.value[messages.value.length - 1]
@@ -869,6 +1124,14 @@ export const useSessionStore = defineStore('session', () => {
           } else if (pendingTableData && typeof pendingTableData === 'object') {
             lastMsg.tableFillingData = {
               ...pendingTableData,
+              generated_files: finalGeneratedFiles,
+            }
+          }
+          if (lastMsg.documentEditingData && typeof lastMsg.documentEditingData === 'object') {
+            lastMsg.documentEditingData.generated_files = finalGeneratedFiles
+          } else if (pendingDocEditData && typeof pendingDocEditData === 'object') {
+            lastMsg.documentEditingData = {
+              ...pendingDocEditData,
               generated_files: finalGeneratedFiles,
             }
           }
@@ -1072,8 +1335,14 @@ export const useSessionStore = defineStore('session', () => {
     }
     if (!sessionId) return
     const payload = getSelectedFilesPayload()
-    const { files: allFiles, template_files: allTemplateFiles, output_space_id: outputSpaceId } = payload
+    const {
+      tempFiles,
+      tempTemplateFiles,
+      files: uploadedFiles,
+      template_files: uploadedTemplateFiles,
+    } = payload
     const effectiveMode = mode || currentMode.value || 'default_conversation'
+    const hasPendingFiles = tempFiles.length > 0 || tempTemplateFiles.length > 0
 
     const tempMsgId = createMessageId('user')
     messages.value.push({
@@ -1082,17 +1351,62 @@ export const useSessionStore = defineStore('session', () => {
       content: content.trim(),
       created_at: new Date().toISOString(),
       metadata: {
-        files: allFiles,
-        template_files: allTemplateFiles,
-        output_space_id: outputSpaceId,
+        files: [
+          ...uploadedFiles.map((f) => ({ ...f, pending: false })),
+          ...tempFiles.map((f) => ({ file_name: f.file_name, file_size: f.file_size, pending: true })),
+        ],
+        template_files: [
+          ...uploadedTemplateFiles.map((f) => ({ ...f, pending: false })),
+          ...tempTemplateFiles.map((f) => ({ file_name: f.file_name, file_size: f.file_size, pending: true })),
+        ],
       },
     })
 
     isStreaming.value = true
-    sendToBackend(sessionId, content.trim(), effectiveMode, allFiles, allTemplateFiles, outputSpaceId)
+
+    let allFiles = [...uploadedFiles]
+    let allTemplateFiles = [...uploadedTemplateFiles]
+
+    if (hasPendingFiles) {
+      const totalFiles = tempFiles.length + tempTemplateFiles.length
+      isUploadingFiles.value = true
+      uploadProgress.value = `正在上传文件 (0/${totalFiles})...`
+
+      uploadTempFiles(tempFiles, tempTemplateFiles, (count, total) => {
+        uploadProgress.value = `正在上传文件 (${count}/${total})...`
+      })
+        .then(({ uploadedFiles: newFiles, uploadedTemplateFiles: newTemplateFiles }) => {
+          allFiles = [...allFiles, ...newFiles]
+          allTemplateFiles = [...allTemplateFiles, ...newTemplateFiles]
+          isUploadingFiles.value = false
+
+          const msgIndex = messages.value.findIndex((m) => m.id === tempMsgId)
+          if (msgIndex > -1) {
+            messages.value[msgIndex].metadata = {
+              files: allFiles.map((f) => ({ ...f, pending: false })),
+              template_files: allTemplateFiles.map((f) => ({ ...f, pending: false })),
+            }
+          }
+
+          sendToBackend(sessionId, content.trim(), effectiveMode, allFiles, allTemplateFiles)
+        })
+        .catch((err) => {
+          console.error('[sendMessage] 上传文件失败:', err)
+          isUploadingFiles.value = false
+          sendToBackend(sessionId, content.trim(), effectiveMode, allFiles, allTemplateFiles)
+        })
+    } else {
+      sendToBackend(sessionId, content.trim(), effectiveMode, allFiles, allTemplateFiles)
+    }
   }
 
-  async function sendToBackend(sessionId, content, mode, files, template_files, output_space_id = '') {
+  async function sendToBackend(sessionId, content, mode, files, template_files) {
+    // 数据源 + 模板 + 填表意图：优先走 table_filling（避免混合模式只筛 JSON 不填模板）
+    if (shouldDirectTableFill(files, template_files, content)) {
+      await runDirectTableFillTask(content, files, template_files)
+      return
+    }
+
     // 混合模式：自动分发任务
     if (mode === 'mixed') {
       await runMixedMode(content, files, template_files)
@@ -1154,7 +1468,6 @@ export const useSessionStore = defineStore('session', () => {
         mode,
         files,
         template_files,
-        output_space_id: output_space_id || useFileStore().outputSpaceId || '',
       }))
     } else {
       console.log('[sendToBackend] 通过 API 发送, wsMatch:', wsMatch, 'canStream:', canStream)
@@ -1166,7 +1479,6 @@ export const useSessionStore = defineStore('session', () => {
           files,
           template_files,
           metadata: {
-            output_space_id: output_space_id || useFileStore().outputSpaceId || '',
           },
         })
         try {
@@ -1251,11 +1563,83 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  /** 单次 table_filling：数据源 Excel + 模板 → 填好的表格 */
+  async function runDirectTableFillTask(content, files, template_files) {
+    const dataFiles = (files || []).filter((f) => !isTemplateFileMeta(f))
+    const tplName = template_files?.[0]?.file_name || '模板'
+    const srcName =
+      dataFiles.find((f) => getFileCategory(f.file_name) === 'excel')?.file_name ||
+      dataFiles[0]?.file_name ||
+      '数据源'
+    const labels = { src: srcName, tpl: tplName }
+
+    showProgressBar.value = true
+    progressValue.value = 0
+    progressMessage.value = `表格填表：${srcName} → ${tplName}`
+
+    const progressMsg = {
+      id: createMessageId('progress'),
+      role: 'assistant',
+      content: `正在将「${srcName}」填入模板「${tplName}」…`,
+      created_at: new Date().toISOString(),
+      mixedSource: 'table_fill',
+      isProgressMessage: true,
+    }
+    messages.value.push(progressMsg)
+
+    const canStream = await waitForWebSocketOpen()
+    if (!canStream || !ws.value || ws.value.readyState !== WebSocket.OPEN) {
+      progressMsg.content = 'WebSocket 连接失败，请重试'
+      isStreaming.value = false
+      return
+    }
+
+    const result = await new Promise((resolve) => {
+      pendingResolve = resolve
+      try {
+        ws.value.send(
+          JSON.stringify({
+            content: expandTableFillPrompt(content),
+            mode: 'table_filling',
+            files: dataFiles.map((f) => ({ ...f, is_selected: true })),
+            template_files: template_files || [],
+          }),
+        )
+      } catch (e) {
+        pendingResolve = null
+        resolve({ success: false, error: e.message })
+      }
+    })
+
+    const taskGeneratedFiles = normalizeGeneratedFiles(result?.generated_files)
+    if (taskGeneratedFiles.length > 0) {
+      progressMsg.generated_files = taskGeneratedFiles
+    }
+    const taskTableData = result?.resp?.tableFillingData
+    if (taskTableData && typeof taskTableData === 'object') {
+      const tableFiles = normalizeGeneratedFiles(taskTableData.generated_files)
+      const fallbackFiles = fallbackGeneratedFilesFromTableData(taskTableData)
+      progressMsg.tableFillingData = {
+        ...taskTableData,
+        generated_files: tableFiles.length > 0 ? tableFiles : fallbackFiles,
+      }
+    }
+
+    finalizeTableFillProgressMessage(progressMsg, result, template_files, labels)
+    clearAllSelectedFiles()
+    isStreaming.value = false
+    showProgressBar.value = false
+    progressValue.value = 100
+  }
+
   // 混合模式主逻辑：按文件类型分发任务
   async function runMixedMode(content, files, template_files) {
-    const outputSpaceId = useFileStore().outputSpaceId || ''
+    if (shouldDirectTableFill(files, template_files, content)) {
+      await runDirectTableFillTask(content, files, template_files)
+      return
+    }
     const docFiles = files.filter(f => getFileCategory(f.file_name) === 'document')
-    const excelFiles = files.filter(f => getFileCategory(f.file_name) === 'excel')
+    const excelFiles = files.filter(f => getFileCategory(f.file_name) === 'excel' && !isTemplateFileMeta(f))
 
     // 无文件或纯文本：通过 WebSocket 流式发送
     if (docFiles.length === 0 && excelFiles.length === 0) {
@@ -1268,7 +1652,6 @@ export const useSessionStore = defineStore('session', () => {
           mode: 'mixed',
           files: files,
           template_files: template_files,
-          output_space_id: outputSpaceId,
         }))
       } else {
         // WebSocket 不可用，fallback 到 REST API
@@ -1297,7 +1680,10 @@ export const useSessionStore = defineStore('session', () => {
 
     for (let i = 0; i < taskList.length; i++) {
       const task = taskList[i]
-      const taskTypeName = task.mode === 'entity_extraction' ? '实体提取任务' : '表格处理任务'
+      const taskTypeName =
+        task.mode === 'entity_extraction'
+          ? '实体提取任务'
+          : (template_files?.length ? '表格填表' : '表格处理任务')
 
       console.log(`[混合模式] 任务 ${i + 1}/${taskList.length} -> ${taskTypeName} | 文件: ${task.file.file_name}`)
 
@@ -1341,7 +1727,6 @@ export const useSessionStore = defineStore('session', () => {
             mode: task.mode,
             files: [{ ...task.file, is_selected: true }],
             template_files: template_files,
-            output_space_id: outputSpaceId,
           })
           console.log(`[混合模式] 任务 ${i + 1}/${taskList.length} - 发送消息:`, JSON.parse(msg))
           ws.value.send(msg)
@@ -1399,6 +1784,12 @@ export const useSessionStore = defineStore('session', () => {
             ...taskTableData,
             generated_files: tableFiles.length > 0 ? tableFiles : fallbackFiles,
           }
+        }
+        if (task.mode === 'table_filling' && template_files?.length) {
+          finalizeTableFillProgressMessage(progressMsg, result, template_files, {
+            src: task.file?.file_name || '数据源',
+            tpl: template_files[0]?.file_name || '模板',
+          })
         }
       }
 

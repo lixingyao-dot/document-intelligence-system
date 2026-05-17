@@ -3,12 +3,27 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+import re
+import shutil
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from config import SystemConfig
 from utils.desktop_runtime import get_desktop_local_library, is_desktop_app
+
+# 文档库落盘名：{doc_uuid}_{原始文件名} 或 {md5}_{原始文件名}
+_STORAGE_PREFIX_RE = re.compile(
+    r"^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32})_",
+    re.IGNORECASE,
+)
+
+
+def display_file_name_from_path(path_or_name: str) -> str:
+    """从 storage 路径/磁盘文件名还原用户可见的原始文件名。"""
+    base = Path(path_or_name).name
+    stripped = _STORAGE_PREFIX_RE.sub("", base, count=1)
+    return stripped or base
 
 
 def resolve_library_doc_path(doc_id: str, config: SystemConfig) -> Optional[str]:
@@ -39,10 +54,18 @@ def resolve_library_doc_path(doc_id: str, config: SystemConfig) -> Optional[str]
                 if p.exists():
                     return str(p)
 
-    workspace_root = Path(config.work_dir)
+    data_root = Path(config.work_dir)
+    lib_root = data_root / "workspace" / "library"
+    if lib_root.is_dir():
+        for p in lib_root.glob(f"*/{doc_id}/*"):
+            if p.is_file():
+                return str(p)
+        legacy_glob = list(lib_root.glob(f"*/{doc_id}_*"))
+        if legacy_glob:
+            return str(legacy_glob[0])
     for candidate in (
-        workspace_root / "library" / doc_id,
-        workspace_root / doc_id,
+        data_root / "library" / doc_id,
+        data_root / doc_id,
     ):
         if candidate.exists():
             return str(candidate)
@@ -71,8 +94,34 @@ def enrich_files_with_library_paths(
         item["library_doc_id"] = doc_id
         item["storage_key"] = path
         item["file_path"] = path
-        if not item.get("file_name"):
-            item["file_name"] = p.name
+        meta_name: Optional[str] = None
+        lib = get_desktop_local_library()
+        if lib:
+            pair = lib.get_doc_record(doc_id)
+            if pair:
+                meta_name = str((pair[1] or {}).get("file_name") or "").strip() or None
+        if not meta_name:
+            try:
+                from db.database import is_database_configured
+                from db.library_repository import get_library_doc_by_id
+            except ImportError:
+                get_library_doc_by_id = None  # type: ignore
+                is_database_configured = lambda _cfg: False  # type: ignore
+            if (
+                get_library_doc_by_id
+                and config.database.enabled
+                and is_database_configured(config)
+            ):
+                doc = get_library_doc_by_id(doc_id, config=config, user_id=None)
+                if doc and doc.file_name:
+                    meta_name = str(doc.file_name).strip()
+        existing = str(item.get("file_name") or "").strip()
+        if meta_name:
+            item["file_name"] = meta_name
+        elif not existing:
+            item["file_name"] = display_file_name_from_path(path)
+        elif _STORAGE_PREFIX_RE.match(existing):
+            item["file_name"] = display_file_name_from_path(existing)
         if not item.get("file_size") and p.is_file():
             item["file_size"] = p.stat().st_size
         item.setdefault("is_selected", True)
@@ -95,7 +144,7 @@ def save_file_to_library_space(
     p = Path(file_path)
     if not p.is_file():
         return False, f"输出文件不存在: {file_path}", None
-    out_name = display_name or p.name
+    out_name = display_name or display_file_name_from_path(p)
 
     if lib:
         try:
@@ -162,6 +211,57 @@ def save_file_to_library_space(
         return False, str(exc), None
 
 
+def persist_generated_files_to_folder(
+    generated_files: List[Dict[str, Any]],
+    save_path: str,
+    config: SystemConfig,
+) -> List[Dict[str, Any]]:
+    """将生成文件复制到用户指定的本地文件夹（智能对话输出，不入文档库）。"""
+    folder = str(save_path or "").strip()
+    if not folder or not generated_files:
+        return []
+
+    dest_dir = Path(folder)
+    if not dest_dir.is_absolute():
+        dest_dir = Path(config.work_dir) / dest_dir
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return []
+
+    saved: List[Dict[str, Any]] = []
+    for gf in generated_files:
+        src = str(gf.get("file_path") or gf.get("path") or "").strip()
+        if not src:
+            continue
+        src_path = Path(src)
+        if not src_path.is_file():
+            continue
+        name = str(gf.get("file_name") or gf.get("name") or display_file_name_from_path(src))
+        dest = dest_dir / name
+        if dest.exists():
+            stem, suffix = dest.stem, dest.suffix
+            for i in range(2, 1000):
+                candidate = dest_dir / f"{stem}_{i}{suffix}"
+                if not candidate.exists():
+                    dest = candidate
+                    break
+        try:
+            shutil.copy2(src_path, dest)
+        except OSError:
+            continue
+        saved.append(
+            {
+                **gf,
+                "file_name": dest.name,
+                "file_path": str(dest.resolve()),
+                "saved_to_folder": str(dest_dir.resolve()),
+                "source": "folder",
+            }
+        )
+    return saved
+
+
 def persist_generated_files_to_library(
     generated_files: List[Dict[str, Any]],
     space_id: str,
@@ -175,7 +275,7 @@ def persist_generated_files_to_library(
         path = str(gf.get("file_path") or gf.get("path") or "").strip()
         if not path:
             continue
-        name = str(gf.get("file_name") or gf.get("name") or Path(path).name)
+        name = str(gf.get("file_name") or gf.get("name") or display_file_name_from_path(path))
         ok, err, doc_id = save_file_to_library_space(path, space_id, config, display_name=name)
         if not ok:
             continue

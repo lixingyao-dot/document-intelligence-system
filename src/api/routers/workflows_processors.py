@@ -9,6 +9,30 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+_LANG_LABEL_MAP = {
+    "en": "英语",
+    "zh": "中文",
+    "ja": "日语",
+    "ko": "韩语",
+    "fr": "法语",
+    "de": "德语",
+    "es": "西班牙语",
+    "ru": "俄语",
+    "ar": "阿拉伯语",
+    "pt": "葡萄牙语",
+    "it": "意大利语",
+    "zh-CN": "简体中文",
+    "zh-TW": "繁体中文",
+}
+
+
+def _target_language_label(config_values: Dict) -> str:
+    """将 targetLanguage 配置（code 或中文名）转为提示词用的语言名。"""
+    raw = str((config_values or {}).get("targetLanguage") or "中文").strip()
+    if raw in _LANG_LABEL_MAP.values():
+        return raw
+    return _LANG_LABEL_MAP.get(raw, raw or "中文")
+
 
 def _get_llm_service():
     """获取 LLM 服务实例。"""
@@ -275,21 +299,31 @@ def _translate_content(content: str, file_name: str, config: SystemConfig, confi
 
     config_values = config_values or {}
     text = content[:8000] if len(content) > 8000 else content
-    
-    # 优先使用自定义提示词
-    custom_prompt = config_values.get("prompt", "").strip()
+    target_language = _target_language_label(config_values)
+
+    custom_prompt = str(config_values.get("prompt") or "").strip()
     if custom_prompt:
-        prompt = custom_prompt.replace("{content}", text) if "{content}" in custom_prompt else f"{custom_prompt}\n{text}"
-    else:
-        target_language = config_values.get("targetLanguage", "中文")
         prompt = (
-            f"你是一个专业的文档翻译助手。请将以下文档翻译为{target_language}，保持原文的格式和结构。\n"
+            custom_prompt.replace("{content}", text)
+            .replace("{target_language}", target_language)
+            .replace("{targetLanguage}", target_language)
+        )
+        if "{content}" not in custom_prompt:
+            prompt = (
+                f"{prompt}\n\n"
+                f"【硬性要求】目标语言：{target_language}。"
+                f"必须将下方全文翻译为{target_language}，仅输出译文，不要保留未翻译的原文段落。\n\n"
+                f"文档内容：\n{text}"
+            )
+    else:
+        prompt = (
+            f"你是一个专业的文档翻译助手。请将以下文档全文翻译为{target_language}，保持原文的格式和结构。\n"
             "注意：\n"
             "1. 保持段落结构不变\n"
             "2. 保留标题层级\n"
             "3. 保留代码块、表格等特殊格式\n"
             "4. 不要添加或删除内容，只进行翻译\n"
-            f"5. 如果源文已经是{target_language}，直接返回原文\n\n"
+            "5. 仅输出译文，不要附带解释\n\n"
             f"文档内容：\n{text}"
         )
 

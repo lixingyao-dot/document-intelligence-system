@@ -273,16 +273,39 @@ class AgentService:
                 yield part
             return
 
-        # 文档编辑模式：走工作流协调器，进入 AgentA 真实编辑链路
+        # 文档编辑模式：走工作流协调器，返回结构化 JSON（含 output_file 供前端「另存为」）
         if mode == "document_editing":
+            import json
+            from pathlib import Path as PathLib
+
             task_spec = self._build_task_spec(session_id, mode, content, files or [], template_files)
             result = await asyncio.to_thread(self.coordinator.execute, task_spec, progress_callback=progress_callback)
             await asyncio.sleep(0)
 
             message = result.message if result else "文档编辑完成"
-            for char in message:
-                yield char
-                await asyncio.sleep(0.005)
+            output_file = getattr(result, "output_file", None) if result else None
+            inner_data = getattr(result.data, "data", None) if result and result.data else None
+            if isinstance(inner_data, dict) and inner_data.get("output_file"):
+                output_file = inner_data.get("output_file")
+
+            generated_files: List[Dict[str, Any]] = []
+            if output_file and PathLib(str(output_file)).is_file():
+                p = PathLib(str(output_file))
+                generated_files.append(
+                    {
+                        "file_path": str(p.resolve()),
+                        "file_name": p.name,
+                        "file_type": p.suffix.lower().lstrip(".") or "docx",
+                    }
+                )
+
+            payload = {
+                "success": bool(result.success) if result else False,
+                "message": message,
+                "output_file": str(output_file) if output_file else None,
+                "generated_files": generated_files,
+            }
+            yield json.dumps(payload, ensure_ascii=False)
             return
 
         # 实体提取模式：返回完整 JSON（非流式），支持进度回调

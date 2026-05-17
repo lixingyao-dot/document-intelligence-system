@@ -2,7 +2,6 @@ import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { useLibraryStore } from './libraryStore'
 
-const OUTPUT_SPACE_KEY = 'chat_output_library_space_id'
 const PICKER_SPACE_KEY = 'chat_picker_library_space_id'
 
 /**
@@ -15,7 +14,6 @@ export const useFileStore = defineStore('file', () => {
   const filesPanelCollapsed = ref(true)
   const searchQuery = ref('')
   const pickerSpaceId = ref(localStorage.getItem(PICKER_SPACE_KEY) || '')
-  const outputSpaceId = ref(localStorage.getItem(OUTPUT_SPACE_KEY) || '')
   const isLoadingDocs = ref(false)
 
   const tempFiles = ref({
@@ -38,11 +36,6 @@ export const useFileStore = defineStore('file', () => {
   watch(pickerSpaceId, (id) => {
     if (id) localStorage.setItem(PICKER_SPACE_KEY, id)
     else localStorage.removeItem(PICKER_SPACE_KEY)
-  })
-
-  watch(outputSpaceId, (id) => {
-    if (id) localStorage.setItem(OUTPUT_SPACE_KEY, id)
-    else localStorage.removeItem(OUTPUT_SPACE_KEY)
   })
 
   function switchFileType(type) {
@@ -80,9 +73,6 @@ export const useFileStore = defineStore('file', () => {
     if (!pickerSpaceId.value && libraryStore.spaces.length) {
       pickerSpaceId.value = libraryStore.spaces[0].id
     }
-    if (!outputSpaceId.value && libraryStore.spaces.length) {
-      outputSpaceId.value = libraryStore.spaces[0].id
-    }
   }
 
   async function setPickerSpace(spaceId) {
@@ -116,9 +106,31 @@ export const useFileStore = defineStore('file', () => {
     tempFiles.value[t].push(docToFileInfo(doc, t))
   }
 
+  async function addFile(type, file) {
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+    const fileUrl = URL.createObjectURL(file)
+    tempFiles.value[type].push({
+      id: tempId,
+      file_name: file.name,
+      file_size: file.size,
+      file_type: type,
+      file_url: fileUrl,
+      original_file: file,
+      is_selected: true,
+      created_at: new Date().toISOString(),
+    })
+  }
+
   function removeFile(id, type) {
     const index = tempFiles.value[type].findIndex((f) => f.id === id)
     if (index > -1) {
+      const fileInfo = tempFiles.value[type][index]
+      const url = fileInfo?.file_url
+      if (url && String(url).startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(url)
+        } catch (_) {}
+      }
       tempFiles.value[type].splice(index, 1)
     }
   }
@@ -151,7 +163,10 @@ export const useFileStore = defineStore('file', () => {
 
   const pickerDocs = computed(() => {
     const q = searchQuery.value.trim().toLowerCase()
-    const docs = libraryStore.currentDocs || []
+    const spaceId = pickerSpaceId.value
+    const docs = spaceId
+      ? (libraryStore.docsCache[spaceId] || [])
+      : []
     if (!q) return docs
     return docs.filter((d) => d.name.toLowerCase().includes(q))
   })
@@ -161,7 +176,6 @@ export const useFileStore = defineStore('file', () => {
     filesPanelCollapsed,
     searchQuery,
     pickerSpaceId,
-    outputSpaceId,
     tempFiles,
     currentFiles,
     hasDataFiles,
@@ -179,6 +193,7 @@ export const useFileStore = defineStore('file', () => {
     loadPickerDocs,
     isDocInSelection,
     toggleLibraryDoc,
+    addFile,
     removeFile,
     toggleFileSelection,
     toggleFilesPanel,

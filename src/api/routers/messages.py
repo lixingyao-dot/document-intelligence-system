@@ -506,6 +506,25 @@ def _message_to_dict(m) -> Dict[str, Any]:
     }
 
 
+def _apply_chat_output_destination(
+    final_files: List[Dict[str, Any]],
+    *,
+    output_space_id: str,
+    cfg,
+) -> tuple[List[Dict[str, Any]], Dict[str, str]]:
+    """智能对话产物：可选写入文档库（兼容旧客户端）；默认保留会话内路径供「另存为」。"""
+    meta: Dict[str, str] = {}
+    space_id = str(output_space_id or "").strip()
+    if space_id and final_files:
+        from utils.library_paths import persist_generated_files_to_library
+
+        library_outputs = persist_generated_files_to_library(final_files, space_id, cfg)
+        if library_outputs:
+            meta["output_space_id"] = space_id
+            return library_outputs, meta
+    return final_files, meta
+
+
 def _persist_generated_files(session_id: str, cfg, user_id: Optional[str], payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     """将生成的文件持久化到 uploads 目录并记录到数据库，返回文件信息列表。"""
     uploads_dir = Path("workspace/uploads") / session_id
@@ -763,6 +782,41 @@ def _save_table_filling_files(session_id: str, cfg, user_id: Optional[str], tabl
 
     print(f"[WS] _save_table_filling_files 返回: {saved_files}")
     return _prioritize_table_filling_downloads(saved_files)
+
+
+def _fallback_document_editing_generated_files(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """从文档编辑 JSON 结果构造 generated_files（当会话文件表未登记时）。"""
+    if not isinstance(payload, dict):
+        return []
+    existing = payload.get("generated_files") or payload.get("generatedFiles") or []
+    if isinstance(existing, list) and existing:
+        out: List[Dict[str, Any]] = []
+        for item in existing:
+            if isinstance(item, dict) and (item.get("file_path") or item.get("path")):
+                path = str(item.get("file_path") or item.get("path"))
+                out.append(
+                    {
+                        "file_path": path,
+                        "file_name": item.get("file_name") or Path(path).name,
+                        "file_type": item.get("file_type") or Path(path).suffix.lower().lstrip("."),
+                    }
+                )
+        if out:
+            return out
+
+    output_file = payload.get("output_file") or payload.get("outputFile")
+    if not output_file:
+        return []
+    path = Path(str(output_file))
+    if not path.is_file():
+        return []
+    return [
+        {
+            "file_path": str(path.resolve()),
+            "file_name": path.name,
+            "file_type": path.suffix.lower().lstrip(".") or "docx",
+        }
+    ]
 
 
 def _fallback_table_filling_generated_files(table_filling_data: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1279,6 +1333,14 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                     }
                     final_files = saved if saved else _fallback_table_filling_generated_files(table_filling_data)
                     if final_files:
+                        final_files, out_meta = _apply_chat_output_destination(
+                            final_files,
+                            output_space_id=output_space_id,
+                            cfg=cfg,
+                        )
+                        if out_meta:
+                            done_payload.update(out_meta)
+                            table_filling_data["generated_files"] = final_files
                         done_payload["generated_files"] = final_files
                     await manager.send_json(session_id, done_payload)
                     continue
@@ -1378,6 +1440,9 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                         elif mode == "table_filling":
                             print(f"[WS] 发送 table_filling chunk, 内容长度={len(piece)} session_id={session_id}")
                             await manager.send_json(session_id, {"type": "chunk", "content": piece, "result_type": "table_filling"})
+                        elif mode == "document_editing":
+                            print(f"[WS] 发送 document_editing chunk, 内容长度={len(piece)} session_id={session_id}")
+                            await manager.send_json(session_id, {"type": "chunk", "content": piece, "result_type": "document_editing"})
                         else:
                             print(f"[WS] 发送普通 chunk, 内容长度={len(piece)} session_id={session_id}")
                             await manager.send_json(session_id, {"type": "chunk", "content": piece})
@@ -1458,6 +1523,17 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                     if fallback_files:
                         assistant_meta["generated_files"] = fallback_files
                     assistant_meta["tableFillingData"] = parsed
+            elif mode == "document_editing":
+                try:
+                    parsed = json.loads(full_response)
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    assistant_content = str(parsed.get("message") or assistant_content or "").strip()
+                    doc_files = _fallback_document_editing_generated_files(parsed)
+                    if doc_files:
+                        assistant_meta["generated_files"] = doc_files
+                    assistant_meta["documentEditingData"] = parsed
 
             add_message(
                 session_id,
@@ -1476,14 +1552,20 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                     final_files = _fallback_table_filling_generated_files(tf_data)
                     done_payload["result_type"] = "table_filling"
                     done_payload["table_filling_data"] = tf_data
-            if output_space_id and final_files:
-                from utils.library_paths import persist_generated_files_to_library
-
-                library_outputs = persist_generated_files_to_library(final_files, output_space_id, cfg)
-                if library_outputs:
-                    final_files = library_outputs
-                    assistant_meta["generated_files"] = final_files
-                    assistant_meta["output_space_id"] = output_space_id
+            if mode == "document_editing" and not final_files:
+                de_data = assistant_meta.get("documentEditingData")
+                if isinstance(de_data, dict):
+                    final_files = _fallback_document_editing_generated_files(de_data)
+                    done_payload["result_type"] = "document_editing"
+                    done_payload["document_editing_data"] = de_data
+            if final_files:
+                final_files, out_meta = _apply_chat_output_destination(
+                    final_files,
+                    output_space_id=output_space_id,
+                    cfg=cfg,
+                )
+                assistant_meta["generated_files"] = final_files
+                assistant_meta.update(out_meta)
             if final_files:
                 done_payload["generated_files"] = final_files
             if output_space_id:

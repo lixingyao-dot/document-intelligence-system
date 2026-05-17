@@ -9,6 +9,7 @@ import { useFileStore } from '../../stores/fileStore'
 import { useLibraryStore } from '../../stores/libraryStore'
 import ChatSidebar from './ChatSidebar.vue'
 import SidebarToggle from '../common/SidebarToggle.vue'
+import { saveResultFile, saveResultFileLabel } from '../../utils/saveResultFile'
 
 // 配置 marked
 marked.setOptions({
@@ -25,6 +26,7 @@ const inputText = ref('')
 const textareaRef = ref(null)
 const previewEntities = ref({})
 const libraryPickerOpen = ref(false)
+const isDragover = ref(false)
 
 const showProgress = computed(() => sessionStore.showProgressBar)
 const progressVal = computed(() => sessionStore.progressValue)
@@ -125,12 +127,50 @@ async function onPickerSpaceChange(event) {
   await fileStore.setPickerSpace(event.target.value)
 }
 
-async function onOutputSpaceChange(event) {
-  fileStore.outputSpaceId = event.target.value
-}
-
 function toggleLibraryPicker() {
   libraryPickerOpen.value = !libraryPickerOpen.value
+  if (libraryPickerOpen.value) {
+    fileStore.filesPanelCollapsed = false
+    if (fileStore.pickerSpaceId) {
+      fileStore.loadPickerDocs()
+    }
+  }
+}
+
+function handleDragOver(e) {
+  e.preventDefault()
+  isDragover.value = true
+}
+
+function handleDragLeave() {
+  isDragover.value = false
+}
+
+function handleDrop(e) {
+  e.preventDefault()
+  isDragover.value = false
+  const files = Array.from(e.dataTransfer?.files || [])
+  if (files.length > 0) {
+    files.forEach((file) => fileStore.addFile(fileStore.currentFileType, file))
+    fileStore.filesPanelCollapsed = false
+  }
+}
+
+function handleFileInput(e) {
+  const files = Array.from(e.target.files || [])
+  if (files.length > 0) {
+    files.forEach((file) => fileStore.addFile(fileStore.currentFileType, file))
+    fileStore.filesPanelCollapsed = false
+  }
+}
+
+function triggerFileInput() {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.multiple = true
+  input.accept = '.pdf,.doc,.docx,.xlsx,.xls,.txt,.md,.csv'
+  input.onchange = handleFileInput
+  input.click()
 }
 
 function togglePickerDoc(doc) {
@@ -139,6 +179,9 @@ function togglePickerDoc(doc) {
 
 function switchFileType(type) {
   fileStore.switchFileType(type)
+  if (!libraryPickerOpen.value) {
+    fileStore.filesPanelCollapsed = false
+  }
 }
 
 function removeFile(id, type) {
@@ -158,32 +201,14 @@ function getFileExt(fileName) {
   return ext ? ext.toUpperCase() : 'FILE'
 }
 
-function downloadResultFile(fileInfo) {
-  const docId = fileInfo?.library_doc_id || fileInfo?.doc_id
-  if (docId) {
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || ''
-    const url = `${baseUrl}/api/library/docs/${encodeURIComponent(docId)}/download`
-    const a = document.createElement('a')
-    a.href = url
-    a.download = fileInfo.file_name || 'download'
-    a.target = '_blank'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    return
+async function saveGeneratedResultFile(fileInfo) {
+  const result = await saveResultFile(fileInfo, {
+    sessionId: sessionStore.currentSessionId,
+  })
+  if (result.canceled) return
+  if (!result.ok && result.error) {
+    alert(`保存失败：${result.error}`)
   }
-  const sid = sessionStore.currentSessionId
-  if (fileInfo?.file_id && sid && !String(fileInfo.file_id).includes('-')) {
-    const url = `/api/sessions/${encodeURIComponent(sid)}/files/${encodeURIComponent(fileInfo.file_id)}/download`
-    window.open(url, '_blank', 'noopener,noreferrer')
-    return
-  }
-  if (!fileInfo?.file_path) return
-  const url = `/api/files/download?path=${encodeURIComponent(fileInfo.file_path)}`
-  const a = document.createElement('a')
-  a.href = url
-  a.download = fileInfo.file_name
-  a.click()
 }
 
 // ============ 实体提取表格预览 ============
@@ -249,12 +274,8 @@ function sortTableFillDownloads(files) {
   return [...(files || [])].sort((a, b) => rankTableFillDownload(a) - rankTableFillDownload(b))
 }
 
-function downloadFileLabel(f) {
-  if (f?.download_label) return f.download_label
-  const ext = getFileExt(f?.file_name)
-  if (ext === 'JSON') return '筛选数据 JSON'
-  if (['XLSX', 'XLS', 'DOCX', 'DOC'].includes(ext)) return '填好的表格'
-  return ext
+function saveFileButtonLabel(f) {
+  return saveResultFileLabel(f)
 }
 
 function getTableFillDownloadFiles(msg) {
@@ -550,9 +571,9 @@ function userMessageAttachments(msg) {
                         :key="f.file_id ?? f.file_path"
                         class="entity-action-btn"
                         type="button"
-                        @click="downloadResultFile(f)"
+                        @click="saveGeneratedResultFile(f)"
                       >
-                        {{ downloadFileLabel(f) }} ↓
+                        {{ saveFileButtonLabel(f) }}
                       </button>
                     </div>
                   </div>
@@ -596,9 +617,9 @@ function userMessageAttachments(msg) {
                       :key="f.file_id ?? f.file_path"
                       class="entity-action-btn"
                       type="button"
-                      @click="downloadResultFile(f)"
+                      @click="saveGeneratedResultFile(f)"
                     >
-                      {{ downloadFileLabel(f) }} ↓
+                      {{ saveFileButtonLabel(f) }}
                     </button>
                   </div>
                 </div>
@@ -614,8 +635,8 @@ function userMessageAttachments(msg) {
                       </span>
                     </div>
                     <div v-if="msg.generated_files?.length" class="entity-preview-actions">
-                      <button v-for="f in msg.generated_files" :key="f.file_id ?? f.file_path" class="entity-action-btn" @click="downloadResultFile(f)">
-                        {{ getFileExt(f.file_name) }} ↓
+                      <button v-for="f in msg.generated_files" :key="f.file_id ?? f.file_path" class="entity-action-btn" @click="saveGeneratedResultFile(f)">
+                        {{ saveFileButtonLabel(f) }}
                       </button>
                     </div>
                   </div>
@@ -654,8 +675,8 @@ function userMessageAttachments(msg) {
                       class="entity-download-item"
                     >
                       <span class="entity-download-name" :title="f.file_name">{{ f.file_name }}</span>
-                      <button type="button" class="entity-action-btn" @click="downloadResultFile(f)">
-                        {{ getFileExt(f.file_name) }} ↓
+                      <button type="button" class="entity-action-btn" @click="saveGeneratedResultFile(f)">
+                        {{ saveFileButtonLabel(f) }}
                       </button>
                     </div>
                   </div>
@@ -724,8 +745,8 @@ function userMessageAttachments(msg) {
                       class="entity-download-item"
                     >
                       <span class="entity-download-name" :title="f.file_name">{{ f.file_name }}</span>
-                      <button type="button" class="entity-action-btn" @click="downloadResultFile(f)">
-                        {{ getFileExt(f.file_name) }} ↓
+                      <button type="button" class="entity-action-btn" @click="saveGeneratedResultFile(f)">
+                        {{ saveFileButtonLabel(f) }}
                       </button>
                     </div>
                   </div>
@@ -745,8 +766,8 @@ function userMessageAttachments(msg) {
                       class="entity-download-item"
                     >
                       <span class="entity-download-name" :title="f.file_name">{{ f.file_name }}</span>
-                      <button type="button" class="entity-action-btn" @click="downloadResultFile(f)">
-                        {{ getFileExt(f.file_name) }} ↓
+                      <button type="button" class="entity-action-btn" @click="saveGeneratedResultFile(f)">
+                        {{ saveFileButtonLabel(f) }}
                       </button>
                     </div>
                   </div>
@@ -793,11 +814,21 @@ function userMessageAttachments(msg) {
       <div class="chat-input-area">
         <div class="chat-input-row">
           <div
-            class="library-attach-bar"
+            class="file-drop-zone"
+            :class="{ dragover: isDragover }"
+            @dragover="handleDragOver"
+            @dragleave="handleDragLeave"
+            @drop="handleDrop"
+            @click="triggerFileInput"
           >
-            <button type="button" class="library-attach-btn" @click="toggleLibraryPicker">
-              <Paperclip :size="18" :stroke-width="2" />
-              从文档库选择
+            <span class="file-drop-zone-icon" aria-hidden="true">
+              <Paperclip :size="20" :stroke-width="2" />
+            </span>
+            <span class="file-drop-zone-text">
+              拖拽或 <span @click.stop="triggerFileInput">浏览</span> 选文件
+            </span>
+            <button type="button" class="library-attach-btn" @click.stop="toggleLibraryPicker">
+              文档库
             </button>
             <div class="file-type-switcher">
               <button
@@ -812,6 +843,7 @@ function userMessageAttachments(msg) {
                 type="button"
                 class="file-type-btn"
                 :class="{ active: fileStore.currentFileType === 'template' }"
+                data-type="template"
                 @click.stop="switchFileType('template')"
               >
                 模板 {{ fileStore.selectedTemplateCount }}
@@ -848,7 +880,7 @@ function userMessageAttachments(msg) {
         <div class="uploaded-files-panel">
           <div class="panel-header" @click="fileStore.toggleFilesPanel">
             <span class="panel-title">
-              已选文档（来自文档库）
+              已选文件
               <span v-if="fileStore.selectedDataCount + fileStore.selectedTemplateCount > 0" class="file-count">
                 ({{ fileStore.selectedDataCount + fileStore.selectedTemplateCount }})
               </span>
@@ -865,13 +897,11 @@ function userMessageAttachments(msg) {
                 <option value="">选择空间</option>
                 <option v-for="s in libraryStore.spaces" :key="s.id" :value="s.id">{{ s.name }}</option>
               </select>
-              <label class="library-io-label">输出文档库</label>
-              <select class="library-io-select" :value="fileStore.outputSpaceId" @change="onOutputSpaceChange">
-                <option value="">选择空间</option>
-                <option v-for="s in libraryStore.spaces" :key="'out-' + s.id" :value="s.id">{{ s.name }}</option>
-              </select>
             </div>
             <div v-if="libraryPickerOpen" class="library-picker-panel">
+              <p class="library-picker-hint">
+                当前勾选为「{{ fileStore.currentFileType === 'template' ? '模板' : '数据' }}」；切换请点击上方「数据 / 模板」
+              </p>
               <input class="library-picker-search" placeholder="搜索文档…" :value="fileStore.searchQuery" @input="fileStore.setSearchQuery($event.target.value)" />
               <div v-if="fileStore.isLoadingDocs" class="files-empty">加载中…</div>
               <div v-else-if="!fileStore.pickerSpaceId" class="files-empty"><span class="empty-text">请先选择输入文档库</span></div>
@@ -883,7 +913,7 @@ function userMessageAttachments(msg) {
               </div>
             </div>
             <div v-if="fileStore.selectedDataCount + fileStore.selectedTemplateCount === 0 && !libraryPickerOpen" class="files-empty">
-              <span class="empty-text">从文档库勾选数据/模板文件后发送；生成结果将写入「输出文档库」</span>
+              <span class="empty-text">从文档库勾选数据/模板后发送；生成完成后在结果区点击「保存…」另存到本地</span>
             </div>
             <div v-if="fileStore.selectedDataCount + fileStore.selectedTemplateCount > 0" class="files-row">
               <!-- Data Files -->
@@ -1211,23 +1241,23 @@ function userMessageAttachments(msg) {
   padding: 6px 0;
 }
 
-.library-attach-bar {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 140px;
-}
-
-.library-attach-btn {
+.file-drop-zone .library-attach-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
+  gap: 4px;
+  padding: 4px 10px;
+  margin-left: 4px;
   border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--bg-card, #fff);
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
+  flex-shrink: 0;
+}
+
+.file-drop-zone .library-attach-btn:hover {
+  border-color: #2563eb;
+  color: #2563eb;
 }
 
 .library-io-row {
@@ -1259,6 +1289,13 @@ function userMessageAttachments(msg) {
   margin-bottom: 10px;
   max-height: 200px;
   overflow: auto;
+}
+
+.library-picker-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+  line-height: 1.4;
 }
 
 .library-picker-search {

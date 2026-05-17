@@ -4,6 +4,7 @@
 const { app, BrowserWindow, dialog, shell, Menu, ipcMain } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const fsp = fs.promises
 const http = require('http')
 const { spawn } = require('child_process')
 
@@ -13,6 +14,52 @@ const DEFAULT_PORT = 8766
 let mainWindow = null
 let backendProc = null
 let apiPort = DEFAULT_PORT
+let lastSaveDialogDir = ''
+
+function lastSaveDirConfigPath() {
+  return path.join(app.getPath('userData'), 'last-save-dialog-dir.json')
+}
+
+function loadLastSaveDialogDir() {
+  try {
+    const raw = fs.readFileSync(lastSaveDirConfigPath(), 'utf8')
+    const parsed = JSON.parse(raw)
+    const dir = String(parsed?.dir || '').trim()
+    if (dir && fs.existsSync(dir)) {
+      lastSaveDialogDir = dir
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function persistLastSaveDialogDir(dirPath) {
+  const dir = path.dirname(dirPath)
+  if (!dir) return
+  lastSaveDialogDir = dir
+  try {
+    fs.writeFileSync(lastSaveDirConfigPath(), JSON.stringify({ dir }), 'utf8')
+  } catch {
+    /* ignore */
+  }
+}
+
+function saveDialogFilters(defaultName) {
+  const ext = path.extname(String(defaultName || '')).toLowerCase()
+  const map = {
+    '.docx': { name: 'Word 文档', extensions: ['docx'] },
+    '.doc': { name: 'Word 文档', extensions: ['doc'] },
+    '.xlsx': { name: 'Excel 工作簿', extensions: ['xlsx'] },
+    '.xls': { name: 'Excel 工作簿', extensions: ['xls'] },
+    '.json': { name: 'JSON', extensions: ['json'] },
+    '.pdf': { name: 'PDF', extensions: ['pdf'] },
+    '.md': { name: 'Markdown', extensions: ['md'] },
+    '.txt': { name: '文本', extensions: ['txt'] },
+  }
+  const spec = map[ext]
+  if (!spec) return [{ name: '所有文件', extensions: ['*'] }]
+  return [spec, { name: '所有文件', extensions: ['*'] }]
+}
 
 function appRoot() {
   return path.resolve(__dirname, '..')
@@ -169,6 +216,69 @@ function registerWindowIpc() {
     if (result.canceled || !result.filePaths?.length) return null
     return result.filePaths[0]
   })
+  ipcMain.handle('dialog:saveFileFromBuffer', async (_event, payload) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { ok: false, canceled: true, error: 'window_unavailable' }
+    }
+    const defaultName = path.basename(String(payload?.defaultName || 'download').trim() || 'download')
+    const base64 = String(payload?.base64 || '')
+    if (!base64) {
+      return { ok: false, canceled: false, error: 'empty_buffer' }
+    }
+    const defaultPath = lastSaveDialogDir
+      ? path.join(lastSaveDialogDir, defaultName)
+      : defaultName
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: '另存为',
+      defaultPath,
+      filters: saveDialogFilters(defaultName),
+    })
+    if (result.canceled || !result.filePath) {
+      return { ok: false, canceled: true }
+    }
+    const destPath = path.resolve(result.filePath)
+    try {
+      await fsp.writeFile(destPath, Buffer.from(base64, 'base64'))
+      persistLastSaveDialogDir(destPath)
+      return { ok: true, savedPath: destPath }
+    } catch (err) {
+      return { ok: false, canceled: false, error: String(err?.message || err) }
+    }
+  })
+  ipcMain.handle('dialog:saveFile', async (_event, payload) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { ok: false, canceled: true, error: 'window_unavailable' }
+    }
+    const sourcePath = path.resolve(String(payload?.sourcePath || '').trim())
+    const defaultName = path.basename(String(payload?.defaultName || '').trim() || sourcePath)
+    if (!sourcePath || !fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+      return { ok: false, canceled: false, error: 'source_not_found' }
+    }
+    const defaultPath = lastSaveDialogDir
+      ? path.join(lastSaveDialogDir, defaultName)
+      : defaultName
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: '另存为',
+      defaultPath,
+      filters: saveDialogFilters(defaultName),
+    })
+    if (result.canceled || !result.filePath) {
+      return { ok: false, canceled: true }
+    }
+    const destPath = path.resolve(result.filePath)
+    try {
+      await fsp.copyFile(sourcePath, destPath)
+      persistLastSaveDialogDir(destPath)
+      return { ok: true, savedPath: destPath }
+    } catch (err) {
+      return { ok: false, canceled: false, error: String(err?.message || err) }
+    }
+  })
+  ipcMain.handle('shell:openPath', async (_event, targetPath) => {
+    const p = String(targetPath || '').trim()
+    if (!p) return ''
+    return shell.openPath(p)
+  })
 }
 
 function notifyMaximizeState() {
@@ -258,6 +368,7 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null)
+    loadLastSaveDialogDir()
     registerWindowIpc()
     return boot()
   })
