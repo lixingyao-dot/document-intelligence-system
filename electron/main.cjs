@@ -296,7 +296,8 @@ function createWindow(url) {
     title: APP_TITLE,
     show: false,
     frame: false,
-    backgroundColor: '#faf9f6',
+    transparent: true,
+    backgroundColor: '#00000000',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -310,6 +311,13 @@ function createWindow(url) {
   }
 
   mainWindow = new BrowserWindow(winOpts)
+  if (process.platform === 'win32' && typeof mainWindow.setBackgroundMaterial === 'function') {
+    try {
+      mainWindow.setBackgroundMaterial('acrylic')
+    } catch {
+      /* Win10 或未启用时忽略 */
+    }
+  }
   mainWindow.setMenuBarVisibility(false)
   mainWindow.removeMenu()
   mainWindow.on('maximize', notifyMaximizeState)

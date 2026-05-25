@@ -875,17 +875,17 @@ function nodeStatusText(status) {
 
 .source-tab.active {
   background: var(--bg-card);
-  border-color: rgba(37, 99, 235, 0.3);
+  border-color: rgba(125, 211, 252, 0.3);
   color: var(--accent-primary);
   font-weight: 600;
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.12);
+  box-shadow: 0 2px 8px rgba(125, 211, 252, 0.12);
 }
 
 .doc-count-badge {
   font-size: 11px;
   font-weight: 600;
   color: var(--accent-primary);
-  background: rgba(37, 99, 235, 0.12);
+  background: rgba(125, 211, 252, 0.12);
   padding: 2px 8px;
   border-radius: 0;
   margin-left: 8px;
@@ -973,7 +973,7 @@ function nodeStatusText(status) {
 }
 
 .doc-list-item.selected {
-  background: rgba(37, 99, 235, 0.08);
+  background: rgba(125, 211, 252, 0.08);
 }
 
 .doc-list-check {
@@ -1012,7 +1012,7 @@ function nodeStatusText(status) {
   width: 3px;
   height: 22px;
   border-radius: 0;
-  background: rgba(37, 99, 235, 0.22);
+  background: rgba(125, 211, 252, 0.22);
   flex-shrink: 0;
 }
 
@@ -1048,8 +1048,8 @@ function nodeStatusText(status) {
 }
 
 .upload-zone:hover {
-  border-color: rgba(37, 99, 235, 0.45);
-  background: rgba(37, 99, 235, 0.04);
+  border-color: rgba(125, 211, 252, 0.45);
+  background: rgba(125, 211, 252, 0.04);
 }
 
 .upload-zone-icon {
@@ -1057,8 +1057,8 @@ function nodeStatusText(status) {
   height: 40px;
   margin: 0 auto 8px;
   border-radius: 0;
-  border: 2px dashed rgba(37, 99, 235, 0.28);
-  background: rgba(37, 99, 235, 0.05);
+  border: 2px dashed rgba(125, 211, 252, 0.28);
+  background: rgba(125, 211, 252, 0.05);
 }
 
 .upload-zone-text {
@@ -1097,7 +1097,7 @@ function nodeStatusText(status) {
   width: 3px;
   height: 22px;
   border-radius: 0;
-  background: rgba(37, 99, 235, 0.22);
+  background: rgba(125, 211, 252, 0.22);
   flex-shrink: 0;
 }
 

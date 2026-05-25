@@ -18,6 +18,10 @@ onMounted(() => {
 
 <template>
   <div class="app electron-shell">
+    <div class="glass-scene" aria-hidden="true">
+      <div class="glass-orb glass-orb--cyan" />
+      <div class="glass-orb glass-orb--violet" />
+    </div>
     <ElectronTitleBar />
     <div class="app-layout">
       <AppHeader />

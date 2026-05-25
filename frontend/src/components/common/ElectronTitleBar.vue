@@ -75,9 +75,6 @@ function closeWindow() {
   display: flex;
   align-items: stretch;
   justify-content: space-between;
-  background: var(--gradient-primary);
-  border-bottom: var(--border-thick) solid var(--border-color);
-  box-shadow: var(--shadow-sm);
   user-select: none;
   -webkit-user-select: none;
 }

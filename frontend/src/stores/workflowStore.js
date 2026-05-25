@@ -1061,6 +1061,12 @@ export const useWorkflowStore = defineStore('workflow', () => {
         return { outputEncoding: 'utf-8', lineEnding: 'lf' }
       case 'schema-convert-format':
         return { targetFormat: 'markdown', conversionOptions: [] }
+      case 'schema-translate':
+        return {
+          targetLanguage: 'zh',
+          prompt:
+            '请将以下文档全文翻译为{target_language}，保持 Markdown/段落结构，仅输出译文。禁止输出英语，除非目标语言就是英语。',
+        }
       default:
         return {}
     }

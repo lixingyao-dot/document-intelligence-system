@@ -44,7 +44,13 @@ class DocxAdapter:
         self._document_title_cache: Optional[Dict[str, Any]] = None
 
     def apply_action(self, action: Dict[str, Any]) -> ActionExecutionResult:
-        action_type = action.get("action_type", "")
+        raw_type = action.get("action_type", "")
+        if hasattr(raw_type, "value"):
+            action_type = str(raw_type.value)
+        else:
+            action_type = str(raw_type or "").strip()
+            if action_type.startswith("ActionType."):
+                action_type = action_type.split(".", 1)[1].lower()
         params = action.get("params", {}) or {}
         target = action.get("target", {}) or {}
 

@@ -243,6 +243,85 @@ function fallbackGeneratedFilesFromDocumentEditing(data) {
   ]
 }
 
+/** 识别文档编辑模式返回的 JSON 字符串 */
+function tryParseDocumentEditingJson(text) {
+  const s = String(text || '').trim()
+  if (!s.startsWith('{')) return null
+  try {
+    const parsed = JSON.parse(s)
+    if (!parsed || typeof parsed !== 'object') return null
+    if (
+      parsed.success === true ||
+      parsed.generated_files ||
+      parsed.generatedFiles ||
+      parsed.output_file ||
+      parsed.outputFile ||
+      (typeof parsed.message === 'string' &&
+        /文档编辑|ActionType|set_font|generated_files/i.test(parsed.message + JSON.stringify(parsed)))
+    ) {
+      return parsed
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+/** 将技术向摘要转为用户可读文案；兼容历史消息里残留的 JSON 正文 */
+function humanizeDocumentEditMessage(raw) {
+  let s = String(raw || '').trim()
+  if (!s) return '文档编辑完成，已生成可下载文件。'
+  const parsed = tryParseDocumentEditingJson(s)
+  if (parsed) {
+    s = String(parsed.message || '').trim()
+  }
+  s = s
+    .replace(/\bActionType\.SET_FONT_FAMILY\b/gi, '设置正文字体')
+    .replace(/\bActionType\.SET_FONT_COLOR\b/gi, '设置字体颜色')
+    .replace(/\bActionType\.SET_FONT_SIZE\b/gi, '设置字号')
+    .replace(/\bActionType\.(\w+)\b/g, (_, name) => {
+      const key = String(name).toLowerCase()
+      const map = {
+        set_font_family: '设置字体',
+        set_font_color: '设置字体颜色',
+        set_font_size: '设置字号',
+      }
+      return map[key] || key.replace(/_/g, ' ')
+    })
+  if (!s || s.startsWith('{')) return '文档编辑完成，已生成可下载文件。'
+  return s
+}
+
+function applyDocumentEditingResultToAssistantMessage(parsed) {
+  if (!parsed || typeof parsed !== 'object') return
+  const normalizedChunkFiles = normalizeGeneratedFiles(parsed.generated_files || parsed.generatedFiles)
+  const fallbackFiles = fallbackGeneratedFilesFromDocumentEditing(parsed)
+  if (normalizedChunkFiles.length > 0) {
+    parsed.generated_files = normalizedChunkFiles
+  } else if (fallbackFiles.length > 0) {
+    parsed.generated_files = fallbackFiles
+  }
+  const summary = humanizeDocumentEditMessage(parsed.message || parsed)
+  const lastMsg = messages.value[messages.value.length - 1]
+  if (lastMsg && lastMsg.role === 'assistant') {
+    lastMsg.content = summary
+    lastMsg.documentEditingData = parsed
+    if (parsed.generated_files?.length) {
+      lastMsg.generated_files = parsed.generated_files
+    }
+  } else {
+    messages.value.push({
+      id: createMessageId('assistant'),
+      role: 'assistant',
+      content: summary,
+      created_at: new Date().toISOString(),
+      documentEditingData: parsed,
+      generated_files: parsed.generated_files || [],
+    })
+  }
+  pendingResultData = { documentEditingData: parsed }
+}
+
 async function loadJsonRowsFromArtifacts(sessionId, tableData, generatedFiles = []) {
   const candidates = []
   const outputJson = tableData?.output_json || tableData?.outputJson
@@ -342,6 +421,22 @@ function normalizeMessageForResultDisplay(msg) {
     if (!normalized.generated_files?.length && normalized.documentEditingData.generated_files?.length) {
       normalized.generated_files = normalized.documentEditingData.generated_files
     }
+  }
+
+  if (normalized.role === 'assistant' && normalized.content) {
+    const inlineParsed = tryParseDocumentEditingJson(normalized.content)
+    if (inlineParsed) {
+      if (!normalized.documentEditingData) {
+        normalized.documentEditingData = inlineParsed
+      }
+      const files = fallbackGeneratedFilesFromDocumentEditing(normalized.documentEditingData)
+      if (files.length && !normalized.generated_files?.length) {
+        normalized.generated_files = files
+      }
+    }
+    normalized.content = humanizeDocumentEditMessage(
+      normalized.documentEditingData?.message || normalized.content
+    )
   }
 
   normalized.metadata = metadata
@@ -1024,49 +1119,31 @@ export const useSessionStore = defineStore('session', () => {
             if (!parsed || typeof parsed !== 'object') {
               throw new Error('document_editing chunk 内容不是有效对象')
             }
-            const normalizedChunkFiles = normalizeGeneratedFiles(
-              parsed.generated_files || parsed.generatedFiles
-            )
-            const fallbackFiles = fallbackGeneratedFilesFromDocumentEditing(parsed)
-            if (normalizedChunkFiles.length > 0) {
-              parsed.generated_files = normalizedChunkFiles
-            } else if (fallbackFiles.length > 0) {
-              parsed.generated_files = fallbackFiles
+            applyDocumentEditingResultToAssistantMessage(parsed)
+          } catch (e) {
+            console.error('[WebSocket onmessage] 解析文档编辑结果失败:', e)
+            const fallback = tryParseDocumentEditingJson(piece)
+            if (fallback) {
+              applyDocumentEditingResultToAssistantMessage(fallback)
             }
-            const summary = String(parsed.message || '文档编辑完成').trim()
+          }
+        } else {
+          const docEditParsed = tryParseDocumentEditingJson(piece)
+          if (docEditParsed) {
+            applyDocumentEditingResultToAssistantMessage(docEditParsed)
+          } else {
+            // 普通流式文本
             const lastMsg = messages.value[messages.value.length - 1]
             if (lastMsg && lastMsg.role === 'assistant') {
-              lastMsg.content = summary
-              lastMsg.documentEditingData = parsed
-              if (parsed.generated_files?.length) {
-                lastMsg.generated_files = parsed.generated_files
-              }
+              lastMsg.content += piece
             } else {
               messages.value.push({
                 id: createMessageId('assistant'),
                 role: 'assistant',
-                content: summary,
+                content: piece,
                 created_at: new Date().toISOString(),
-                documentEditingData: parsed,
-                generated_files: parsed.generated_files || [],
               })
             }
-            pendingResultData = { documentEditingData: parsed }
-          } catch (e) {
-            console.error('[WebSocket onmessage] 解析文档编辑结果失败:', e)
-          }
-        } else {
-          // 普通流式文本
-          const lastMsg = messages.value[messages.value.length - 1]
-          if (lastMsg && lastMsg.role === 'assistant') {
-            lastMsg.content += piece
-          } else {
-            messages.value.push({
-              id: createMessageId('assistant'),
-              role: 'assistant',
-              content: piece,
-              created_at: new Date().toISOString(),
-            })
           }
         }
       } else if (data.type === 'done') {
@@ -1134,6 +1211,13 @@ export const useSessionStore = defineStore('session', () => {
               ...pendingDocEditData,
               generated_files: finalGeneratedFiles,
             }
+          }
+          const deForText =
+            lastMsg.documentEditingData || doneDocEditData || pendingDocEditData
+          if (tryParseDocumentEditingJson(lastMsg.content) || deForText) {
+            lastMsg.content = humanizeDocumentEditMessage(
+              deForText?.message || lastMsg.content
+            )
           }
         }
         if (!finalGeneratedFiles.length) {

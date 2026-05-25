@@ -34,6 +34,17 @@ def _target_language_label(config_values: Dict) -> str:
     return _LANG_LABEL_MAP.get(raw, raw or "中文")
 
 
+def _translate_language_constraints(target_language: str) -> str:
+    """按目标语言追加硬性约束，降低本地模型误译为英语的概率。"""
+    extra = {
+        "日语": "译文必须使用日语（日本語）书写，禁止输出英语或中文。",
+        "韩语": "译文必须使用韩语书写，禁止输出英语。",
+        "中文": "译文必须使用中文，禁止输出英语。",
+        "英语": "译文必须使用英语，禁止输出中文或日语。",
+    }
+    return extra.get(target_language, f"译文必须使用{target_language}，不要改用其他语言。")
+
+
 def _get_llm_service():
     """获取 LLM 服务实例。"""
     from core.llm.llm_service import get_llm_service
@@ -323,13 +334,27 @@ def _translate_content(content: str, file_name: str, config: SystemConfig, confi
             "2. 保留标题层级\n"
             "3. 保留代码块、表格等特殊格式\n"
             "4. 不要添加或删除内容，只进行翻译\n"
-            "5. 仅输出译文，不要附带解释\n\n"
+            "5. 仅输出译文，不要附带解释\n"
+            f"6. {_translate_language_constraints(target_language)}\n\n"
             f"文档内容：\n{text}"
         )
 
+    lang_constraint = _translate_language_constraints(target_language)
+    if lang_constraint not in prompt:
+        prompt = f"{prompt}\n\n【语言约束】{lang_constraint}"
+
     try:
         response = service.chat(
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        f"你是文档翻译器。用户指定的目标语言是：{target_language}。"
+                        f"{lang_constraint} 只输出译文正文。"
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
             temperature=0.3,
             strip_markdown_output=False,
         )

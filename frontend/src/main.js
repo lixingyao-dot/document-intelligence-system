@@ -1,8 +1,8 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
-import '@fontsource/fusion-pixel-12px-monospaced-sc'
 import './styles/main.css'
+import './styles/glass-theme.css'
 
 const app = createApp(App)
 app.use(createPinia())

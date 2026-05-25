@@ -158,7 +158,9 @@ async function handleSave() {
 .settings-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(42, 38, 51, 0.45);
+  background: rgba(6, 10, 20, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   z-index: 2000;
   display: flex;
   align-items: center;
@@ -171,9 +173,12 @@ async function handleSave() {
   max-width: 520px;
   max-height: 90vh;
   overflow-y: auto;
-  background: var(--bg-secondary);
-  border: 2px solid var(--border-color);
-  box-shadow: var(--shadow-lg);
+  background: rgba(15, 23, 42, 0.82);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-radius);
+  box-shadow: var(--glass-shadow);
   padding: 20px 22px 18px;
 }
 

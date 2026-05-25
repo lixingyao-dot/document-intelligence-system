@@ -34,10 +34,9 @@
 |--------|------|------------------|
 | **Agent A** | 文档理解、按自然语言编辑文档 | docx、txt、md、xlsx 等 |
 | **Agent B** | 非结构化文档实体/字段抽取 → JSON | docx、pdf、txt、md |
-| **Agent C** | 抽取结果持久化（服务端 PostgreSQL 场景） | — |
 | **Agent D** | Excel 筛选 + 填入 Word/Excel 模板 | xlsx 数据源 + xlsx/docx 模板 |
 
-桌面版默认使用**本地 JSON + 文件**存储会话、文档库与工作流（无需自建数据库即可完整体验）。
+桌面版由 **A / B / D 三类智能体**协作；会话、文档库、工作流与配置均使用**本地 JSON + 文件**，无需数据库即可完整使用。
 
 ---
 
@@ -50,6 +49,17 @@
 - **结果保存**：生成文件通过系统**另存为**对话框保存（不强制写入固定目录、不自动塞入文档库）。
 
 手工测试样例见：[test-fixtures/templates/README.md](test-fixtures/templates/README.md)。
+
+### 生成项目展示 PPT（含实测截图）
+
+将界面截图放入 `output/presentation_assets/`（`img01.png` … `img14.png`），然后执行：
+
+```powershell
+cd desktop-electron
+python scripts\build_presentation_with_screenshots.py
+```
+
+产物：`output/文档智能系统_项目展示_v2.pptx`（9 页：含三类智能体专页，无数据库/Agent C）。
 
 ---
 

@@ -1,0 +1,359 @@
+/**
+ * Electron 毛玻璃 · 全站布局与组件强化
+ * 与 main.css :root 变量配合，覆盖各模块硬编码样式
+ */
+
+html:has(.electron-shell),
+body:has(.electron-shell) {
+  background: transparent !important;
+}
+
+.app.electron-shell {
+  position: relative;
+  isolation: isolate;
+  min-height: 100vh;
+}
+
+.app.electron-shell .glass-scene {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 120% 80% at 50% 0%, #1a2744 0%, var(--glass-deep) 55%, #060a14 100%);
+}
+
+.app.electron-shell .glass-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(72px);
+  opacity: 0.85;
+}
+
+.app.electron-shell .glass-orb--cyan {
+  width: 420px;
+  height: 420px;
+  top: -80px;
+  right: -60px;
+  background: rgba(56, 189, 248, 0.45);
+}
+
+.app.electron-shell .glass-orb--violet {
+  width: 380px;
+  height: 380px;
+  bottom: -100px;
+  left: -80px;
+  background: rgba(139, 92, 246, 0.5);
+}
+
+.app.electron-shell > :not(.glass-scene) {
+  position: relative;
+  z-index: 1;
+}
+
+/* 窗口标题栏 */
+.app.electron-shell .electron-titlebar {
+  margin: 10px 12px 0;
+  border-radius: var(--glass-radius-sm);
+  background: var(--glass-panel);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-sm);
+}
+
+.app.electron-shell .titlebar-title,
+.app.electron-shell .titlebar-badge {
+  color: var(--text-primary);
+}
+
+.app.electron-shell .titlebar-badge {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--glass-border-soft);
+  box-shadow: none;
+}
+
+.app.electron-shell .win-btn {
+  border-left: 1px solid var(--glass-border-soft);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* 主布局 */
+.app.electron-shell .app-layout {
+  padding: 10px 12px 12px;
+  gap: 12px;
+}
+
+.app.electron-shell .main-content,
+.app.electron-shell .library-view,
+.app.electron-shell .chat-view,
+.app.electron-shell .workflow-view {
+  border-radius: var(--glass-radius);
+  background: var(--glass-panel);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  overflow: hidden;
+}
+
+/* —— 文档库 —— */
+.app.electron-shell .library-toolbar,
+.app.electron-shell .library-sidebar,
+.app.electron-shell .library-content,
+.app.electron-shell .content-header,
+.app.electron-shell .space-item,
+.app.electron-shell .doc-card,
+.app.electron-shell .sidebar-panel {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--glass-border-soft);
+}
+
+.app.electron-shell .doc-card:hover,
+.app.electron-shell .space-item:hover {
+  background: var(--glass-panel-hover);
+  border-color: var(--glass-border);
+}
+
+.app.electron-shell .doc-card.selected,
+.app.electron-shell .space-item.active {
+  background: rgba(125, 211, 252, 0.15);
+  border-color: rgba(125, 211, 252, 0.4);
+}
+
+.app.electron-shell .lib-btn,
+.app.electron-shell .space-action,
+.app.electron-shell .panel-edge-toggle {
+  background: var(--glass-panel-strong);
+  border: 1px solid var(--glass-border-soft);
+  border-radius: var(--glass-radius-sm);
+  box-shadow: none;
+  color: var(--text-primary);
+}
+
+/* —— 对话 —— */
+.app.electron-shell .chat-sidebar,
+.app.electron-shell .chat-sidebar-header,
+.app.electron-shell .chat-main,
+.app.electron-shell .chat-messages,
+.app.electron-shell .chat-input-area,
+.app.electron-shell .mode-selector {
+  background: transparent;
+  border-color: var(--glass-border-soft);
+}
+
+.app.electron-shell .session-item {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--glass-radius-sm);
+  color: var(--text-secondary);
+}
+
+.app.electron-shell .session-item:hover,
+.app.electron-shell .session-item.active {
+  background: var(--glass-panel-hover);
+  border-color: var(--glass-border-soft);
+  color: var(--text-primary);
+}
+
+.app.electron-shell .new-session-btn,
+.app.electron-shell .mode-tab,
+.app.electron-shell .quick-action {
+  background: var(--glass-panel-strong);
+  border: 1px solid var(--glass-border-soft);
+  border-radius: var(--glass-radius-sm);
+  box-shadow: none;
+  color: var(--text-secondary);
+}
+
+.app.electron-shell .mode-tab.active,
+.app.electron-shell .quick-action:hover {
+  background: rgba(125, 211, 252, 0.18);
+  border-color: rgba(125, 211, 252, 0.4);
+  color: #fff;
+}
+
+.app.electron-shell .welcome-state {
+  color: var(--text-secondary);
+}
+
+.app.electron-shell .welcome-icon {
+  background: var(--glass-panel-strong);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-radius);
+  color: var(--accent-primary);
+}
+
+.app.electron-shell .message-avatar {
+  background: var(--glass-panel-strong);
+  border: 1px solid var(--glass-border-soft);
+  color: var(--text-primary);
+}
+
+.app.electron-shell .attachment-card {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--glass-border-soft);
+}
+
+/* —— 工作流 —— */
+.app.electron-shell .workflow-toolbar,
+.app.electron-shell .workflow-sidebar,
+.app.electron-shell .workflow-config-panel,
+.app.electron-shell .workflow-canvas-wrap,
+.app.electron-shell .canvas-area {
+  background: rgba(0, 0, 0, 0.12);
+  border-color: var(--glass-border-soft);
+}
+
+.app.electron-shell .workflow-node,
+.app.electron-shell .workflow-node-card,
+.app.electron-shell .canvas-node {
+  background: var(--glass-panel-strong);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-radius-sm);
+  box-shadow: var(--shadow-sm);
+}
+
+.app.electron-shell .lang-chip,
+.app.electron-shell .format-chip,
+.app.electron-shell .provider-panel .field select,
+.app.electron-shell .provider-panel .field input {
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--glass-border-soft);
+  color: var(--text-primary);
+}
+
+.app.electron-shell .lang-chip.active,
+.app.electron-shell .format-chip.active {
+  background: rgba(125, 211, 252, 0.2);
+  border-color: rgba(125, 211, 252, 0.45);
+  color: #fff;
+}
+
+/* —— 通用控件 —— */
+.app.electron-shell .btn-primary,
+.app.electron-shell .send-btn,
+.app.electron-shell .config-btn {
+  background: var(--gradient-primary);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: var(--glass-radius-sm);
+  box-shadow: none;
+  color: #fff;
+}
+
+.app.electron-shell .btn-secondary,
+.app.electron-shell .icon-btn,
+.app.electron-shell .header-btn,
+.app.electron-shell .session-action-btn {
+  background: var(--glass-panel-strong);
+  border: 1px solid var(--glass-border-soft);
+  border-radius: var(--glass-radius-sm);
+  box-shadow: none;
+  color: var(--text-primary);
+}
+
+.app.electron-shell .btn-secondary:hover,
+.app.electron-shell .icon-btn:hover,
+.app.electron-shell .lib-btn:hover {
+  background: var(--glass-panel-hover);
+}
+
+.app.electron-shell input,
+.app.electron-shell textarea,
+.app.electron-shell select {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--glass-border-soft);
+  border-radius: var(--glass-radius-sm);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+.app.electron-shell input:focus,
+.app.electron-shell textarea:focus,
+.app.electron-shell select:focus {
+  border-color: rgba(125, 211, 252, 0.55);
+  box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.15);
+}
+
+.app.electron-shell .message-bubble {
+  background: var(--glass-panel-strong);
+  border: 1px solid var(--glass-border-soft);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--text-primary);
+}
+
+.app.electron-shell .message.user .message-bubble {
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.45) 0%, rgba(99, 102, 241, 0.42) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+
+.app.electron-shell .entity-preview,
+.app.electron-shell .settings-modal,
+.app.electron-shell .settings-overlay,
+.app.electron-shell .progress-bar-wrap {
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.app.electron-shell .settings-overlay {
+  background: rgba(6, 10, 20, 0.6);
+}
+
+.app.electron-shell .settings-modal {
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-radius);
+  box-shadow: var(--glass-shadow);
+}
+
+.app.electron-shell .progress-bar {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.app.electron-shell .progress-bar-fill {
+  background: var(--gradient-primary);
+}
+
+.app.electron-shell .logo-icon,
+.app.electron-shell .nav-tab.active {
+  box-shadow: none;
+}
+
+.app.electron-shell .app-sidebar .nav-tab.active {
+  background: rgba(125, 211, 252, 0.18);
+  border-color: rgba(125, 211, 252, 0.45);
+  color: #fff;
+}
+
+.app.electron-shell ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.app.electron-shell ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+}
+
+.app.electron-shell ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Markdown 正文在暗色玻璃上可读 */
+.app.electron-shell .md-content :is(h1, h2, h3, h4, p, li, code, pre) {
+  color: var(--text-primary);
+}
+
+.app.electron-shell .md-content pre {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--glass-border-soft);
+}
+
+.app.electron-shell .md-content code {
+  background: rgba(255, 255, 255, 0.08);
+}

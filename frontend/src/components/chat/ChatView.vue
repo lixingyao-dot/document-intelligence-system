@@ -974,10 +974,13 @@ function userMessageAttachments(msg) {
 <style scoped>
 /* 进度条 */
 .progress-card {
-  background: #f9fafb;
-  border-radius: 0;
+  background: var(--glass-panel-strong);
+  border: 1px solid var(--glass-border-soft);
+  border-radius: var(--glass-radius-sm);
   padding: 12px 16px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .progress-header {
@@ -990,38 +993,38 @@ function userMessageAttachments(msg) {
 .progress-title {
   font-size: 14px;
   font-weight: 500;
-  color: #374151;
+  color: var(--text-primary);
 }
 
 .progress-msg {
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--text-muted);
   flex: 1;
 }
 
 .progress-indicator {
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--text-muted);
   animation: pulse 1s infinite;
 }
 
 .progress-done {
   font-size: 12px;
-  color: #10b981;
+  color: var(--accent-success);
   font-weight: 500;
 }
 
 .progress-bar-container {
   height: 8px;
-  background: #e5e7eb;
-  border-radius: 0;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
   overflow: hidden;
 }
 
 .progress-bar {
   height: 100%;
-  background: linear-gradient(90deg, #10b981, #34d399);
-  border-radius: 0;
+  background: var(--gradient-success);
+  border-radius: 8px;
   transition: width 0.3s ease;
 }
 
@@ -1033,10 +1036,12 @@ function userMessageAttachments(msg) {
 /* ============ 实体提取表格预览 ============ */
 .entity-preview {
   margin-top: 12px;
-  border: 1px solid #d1d5db;
-  border-radius: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-radius-sm);
   overflow: hidden;
-  background: white;
+  background: var(--glass-panel-strong);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 
 .entity-preview-header {
@@ -1044,14 +1049,14 @@ function userMessageAttachments(msg) {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: white;
-  border-bottom: 1px solid #e5e7eb;
+  background: rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--glass-border-soft);
 }
 
 .entity-preview-title {
   font-size: 13px;
   font-weight: 500;
-  color: #111827;
+  color: var(--text-primary);
 }
 
 .entity-preview-actions {
@@ -1070,7 +1075,7 @@ function userMessageAttachments(msg) {
 
 .entity-download-name {
   font-size: 12px;
-  color: #374151;
+  color: var(--text-secondary);
   max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1078,21 +1083,21 @@ function userMessageAttachments(msg) {
 }
 
 .table-fill-preview .entity-download-name {
-  color: #78350f;
+  color: #fcd34d;
 }
 
 .entity-action-btn {
-  background: #3b82f6;
+  background: var(--gradient-primary);
   color: white;
-  border: none;
-  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
   padding: 3px 10px;
   font-size: 12px;
   cursor: pointer;
 }
 
 .entity-action-btn:hover {
-  background: #2563eb;
+  filter: brightness(1.08);
 }
 
 .entity-table-wrapper {
@@ -1105,7 +1110,7 @@ function userMessageAttachments(msg) {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
-  background: white;
+  background: transparent;
 }
 
 .entity-table thead {
@@ -1115,81 +1120,81 @@ function userMessageAttachments(msg) {
 }
 
 .entity-table th {
-  background: white;
-  color: #111827;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
   font-weight: 600;
   padding: 6px 10px;
   text-align: left;
   white-space: nowrap;
-  border-bottom: 1px solid #d1d5db;
-  border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--glass-border-soft);
+  border-right: 1px solid var(--glass-border-soft);
 }
 
 .entity-table td {
   padding: 5px 10px;
-  border-bottom: 1px solid #f3f4f6;
-  border-right: 1px solid #f9fafb;
-  color: #111827;
+  border-bottom: 1px solid var(--glass-border-soft);
+  border-right: 1px solid rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
   max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  background: white;
+  background: rgba(0, 0, 0, 0.12);
 }
 
 .entity-table tbody tr:hover td {
-  background: #f0f9ff;
+  background: var(--glass-panel-hover);
 }
 
 .entity-preview-more {
   padding: 8px 12px;
   text-align: center;
   font-size: 12px;
-  color: #6b7280;
-  background: white;
-  border-top: 1px solid #e5e7eb;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+  border-top: 1px solid var(--glass-border-soft);
 }
 
 .table-fill-preview {
-  border-color: #fcd34d;
-  background: #fffbeb;
+  border-color: rgba(251, 191, 36, 0.45);
+  background: rgba(245, 158, 11, 0.08);
 }
 
 .table-fill-preview .entity-preview-header {
-  background: #fffbeb;
-  border-bottom: 1px solid #fde68a;
+  background: rgba(245, 158, 11, 0.1);
+  border-bottom: 1px solid rgba(251, 191, 36, 0.25);
 }
 
 .table-fill-preview .entity-preview-title {
-  color: #78350f;
+  color: #fcd34d;
 }
 
 .table-fill-preview .entity-table th {
-  background: #fef3c7;
-  color: #78350f;
-  border-bottom: 1px solid #fcd34d;
-  border-right: 1px solid #fde68a;
+  background: rgba(245, 158, 11, 0.15);
+  color: #fde68a;
+  border-bottom: 1px solid rgba(251, 191, 36, 0.3);
+  border-right: 1px solid rgba(251, 191, 36, 0.2);
 }
 
 .table-fill-preview .entity-table td {
-  border-bottom: 1px solid #fef3c7;
-  border-right: 1px solid #fefce8;
-  background: #ffffff;
+  border-bottom: 1px solid rgba(251, 191, 36, 0.12);
+  border-right: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(0, 0, 0, 0.1);
 }
 
 .table-fill-preview .entity-table tbody tr:hover td {
-  background: #fff7ed;
+  background: rgba(245, 158, 11, 0.12);
 }
 
 .table-fill-preview .entity-preview-more {
-  background: #fffbeb;
-  border-top: 1px solid #fde68a;
-  color: #92400e;
+  background: rgba(245, 158, 11, 0.08);
+  border-top: 1px solid rgba(251, 191, 36, 0.25);
+  color: #fbbf24;
 }
 
 .table-fill-stats {
   font-size: 12px;
-  color: #92400e;
+  color: #fbbf24;
   white-space: nowrap;
 }
 
@@ -1210,8 +1215,8 @@ function userMessageAttachments(msg) {
 .typing-dot {
   width: 6px;
   height: 6px;
-  background: #6b7280;
-  border-radius: 0;
+  background: var(--text-muted);
+  border-radius: 50%;
   animation: typing-bounce 1.4s infinite ease-in-out both;
 }
 
@@ -1236,7 +1241,7 @@ function userMessageAttachments(msg) {
 
 .assistant-empty-hint {
   font-size: 14px;
-  color: #6b7280;
+  color: var(--text-muted);
   line-height: 1.55;
   padding: 6px 0;
 }
@@ -1247,17 +1252,18 @@ function userMessageAttachments(msg) {
   gap: 4px;
   padding: 4px 10px;
   margin-left: 4px;
-  border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 6px;
-  background: var(--bg-card, #fff);
+  border: 1px solid var(--glass-border-soft);
+  border-radius: 8px;
+  background: var(--glass-panel-strong);
+  color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
   flex-shrink: 0;
 }
 
 .file-drop-zone .library-attach-btn:hover {
-  border-color: #2563eb;
-  color: #2563eb;
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
 }
 
 .library-io-row {
@@ -1270,7 +1276,7 @@ function userMessageAttachments(msg) {
 
 .library-io-label {
   font-size: 12px;
-  color: var(--text-muted, #6b7280);
+  color: var(--text-muted);
 }
 
 .library-io-select {
@@ -1278,23 +1284,26 @@ function userMessageAttachments(msg) {
   min-width: 120px;
   padding: 6px 8px;
   font-size: 13px;
-  border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 6px;
+  border: 1px solid var(--glass-border-soft);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text-primary);
 }
 
 .library-picker-panel {
-  border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 8px;
+  border: 1px solid var(--glass-border-soft);
+  border-radius: var(--glass-radius-sm);
   padding: 8px;
   margin-bottom: 10px;
   max-height: 200px;
   overflow: auto;
+  background: var(--glass-panel-strong);
 }
 
 .library-picker-hint {
   margin: 0 0 8px;
   font-size: 12px;
-  color: var(--text-muted, #6b7280);
+  color: var(--text-muted);
   line-height: 1.4;
 }
 
@@ -1303,8 +1312,10 @@ function userMessageAttachments(msg) {
   padding: 6px 8px;
   margin-bottom: 8px;
   font-size: 13px;
-  border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 6px;
+  border: 1px solid var(--glass-border-soft);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text-primary);
 }
 
 .library-picker-item {
@@ -1313,16 +1324,18 @@ function userMessageAttachments(msg) {
   gap: 8px;
   padding: 8px;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 13px;
+  color: var(--text-secondary);
 }
 
 .library-picker-item:hover {
-  background: rgba(37, 99, 235, 0.06);
+  background: var(--glass-panel-hover);
 }
 
 .library-picker-item.selected {
-  background: rgba(37, 99, 235, 0.1);
+  background: rgba(125, 211, 252, 0.15);
+  color: var(--text-primary);
 }
 
 .library-picker-name {

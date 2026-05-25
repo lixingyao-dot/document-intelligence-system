@@ -77,7 +77,9 @@ function handleTabClick(tabId) {
   font-size: 10px;
   font-weight: 600;
   color: var(--accent-primary);
-  background: rgba(66, 99, 235, 0.12);
+  background: rgba(125, 211, 252, 0.15);
+  border: 1px solid var(--glass-border-soft);
+  border-radius: 8px;
   padding: 2px 6px;
   margin-top: 2px;
 }
@@ -89,8 +91,9 @@ function handleTabClick(tabId) {
   justify-content: center;
   gap: 8px;
   padding: 10px 8px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
+  background: var(--glass-panel-strong);
+  border: 1px solid var(--glass-border-soft);
+  border-radius: var(--glass-radius-sm);
   font-size: 11px;
   font-weight: 500;
   color: var(--text-secondary);
@@ -99,8 +102,8 @@ function handleTabClick(tabId) {
 }
 
 .settings-btn:hover {
-  background: var(--bg-hover);
+  background: var(--glass-panel-hover);
   color: var(--text-primary);
-  border-color: var(--accent-primary);
+  border-color: var(--glass-border);
 }
 </style>

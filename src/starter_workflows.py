@@ -45,8 +45,11 @@ def build_starter_workflows(now: Optional[str] = None) -> Dict[str, Any]:
                     "body": "使用大模型进行智能翻译处理",
                     "schemaKey": "schema-translate",
                     "configValues": {
-                        "targetLanguage": "en",
-                        "prompt": "请将此文档翻译为指定语言，保持原文格式和专业术语的准确性。",
+                        "targetLanguage": "zh",
+                        "prompt": (
+                            "请将以下文档全文翻译为{target_language}，保持 Markdown/段落结构，仅输出译文。"
+                            "禁止输出英语，除非目标语言就是英语。"
+                        ),
                     },
                 },
                 {
