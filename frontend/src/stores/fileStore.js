@@ -161,6 +161,22 @@ export const useFileStore = defineStore('file', () => {
     filesPanelCollapsed.value = !filesPanelCollapsed.value
   }
 
+  /** 清空聊天区暂存附件（发送后调用，释放 blob URL） */
+  function clearAllFiles() {
+    for (const type of ['data', 'template']) {
+      for (const f of tempFiles.value[type]) {
+        const u = f?.file_url
+        if (u && String(u).startsWith('blob:')) {
+          try {
+            URL.revokeObjectURL(u)
+          } catch (_) {}
+        }
+      }
+      tempFiles.value[type] = []
+    }
+    filesPanelCollapsed.value = true
+  }
+
   const pickerDocs = computed(() => {
     const q = searchQuery.value.trim().toLowerCase()
     const spaceId = pickerSpaceId.value
@@ -197,6 +213,7 @@ export const useFileStore = defineStore('file', () => {
     removeFile,
     toggleFileSelection,
     toggleFilesPanel,
+    clearAllFiles,
     getFileTypeLabel,
     setSearchQuery: (q) => {
       searchQuery.value = q

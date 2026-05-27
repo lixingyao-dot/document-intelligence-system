@@ -1,5 +1,4 @@
 <script setup>
-import { ref } from 'vue'
 import {
   FileText,
   FolderOpen,
@@ -8,10 +7,9 @@ import {
   Settings,
 } from 'lucide-vue-next'
 import { useTabStore } from '../stores/tabStore'
-import SettingsModal from './SettingsModal.vue'
+const emit = defineEmits(['open-settings'])
 
 const tabStore = useTabStore()
-const showSettings = ref(false)
 
 const tabIcons = {
   library: FolderOpen,
@@ -37,7 +35,6 @@ function handleTabClick(tabId) {
         </div>
       </div>
       <span class="sidebar-brand-title">文档智能</span>
-      <span class="sidebar-brand-badge">本地版</span>
     </div>
 
     <nav class="sidebar-nav main-nav" aria-label="功能模块">
@@ -62,40 +59,35 @@ function handleTabClick(tabId) {
     </nav>
 
     <div class="sidebar-footer">
-      <button type="button" class="settings-btn" @click="showSettings = true">
+      <button
+        type="button"
+        class="settings-btn"
+        title="API 与模型设置"
+        @click.stop="emit('open-settings')"
+      >
         <Settings :size="18" :stroke-width="2" aria-hidden="true" />
-        <span>API 与模型设置</span>
+        <span>模型设置</span>
       </button>
     </div>
-
-    <SettingsModal v-if="showSettings" @close="showSettings = false" />
   </aside>
 </template>
 
 <style scoped>
-.sidebar-brand-badge {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--accent-primary);
-  background: rgba(125, 211, 252, 0.15);
-  border: 1px solid var(--glass-border-soft);
-  border-radius: 8px;
-  padding: 2px 6px;
-  margin-top: 2px;
-}
-
 .settings-btn {
   width: 100%;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 10px 8px;
+  gap: 4px;
+  padding: 10px 4px;
   background: var(--glass-panel-strong);
   border: 1px solid var(--glass-border-soft);
   border-radius: var(--glass-radius-sm);
-  font-size: 11px;
-  font-weight: 500;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
   color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.2s;

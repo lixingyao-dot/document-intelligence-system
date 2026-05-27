@@ -1,50 +1,313 @@
 /**
- * Electron 毛玻璃 · 全站布局与组件强化
- * 与 main.css :root 变量配合，覆盖各模块硬编码样式
+ * Electron · 窗口级毛玻璃
+ * Win11：DWM Acrylic（backgroundMaterial）+ 极淡 web tint
+ * Win10：桌面截图 + filter:blur 回退
  */
 
-html:has(.electron-shell),
-body:has(.electron-shell) {
-  background: transparent !important;
+html.electron-glass {
+  --electron-frost-blur-img: 120px;
+  --electron-frost-saturate: 250%;
+  --electron-frost-tint: rgba(12, 12, 16, 0.36);
 }
 
-.app.electron-shell {
-  position: relative;
-  isolation: isolate;
+/* Win11 原生 Acrylic：web 层尽量透明，让系统模糊桌面 */
+html.electron-glass.electron-native-acrylic {
+  --electron-frost-tint: rgba(12, 12, 16, 0.06);
+}
+
+html.electron-glass.electron-native-acrylic .electron-root .glass-desktop-bg {
+  display: none !important;
+}
+
+html.electron-glass.electron-native-acrylic .electron-root .glass-blur-layer {
+  background: var(--electron-frost-tint);
+}
+
+html.electron-glass.electron-native-acrylic .electron-root::before {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.12) 0%,
+    rgba(255, 255, 255, 0.02) 45%,
+    rgba(0, 0, 0, 0.04) 100%
+  );
+}
+
+html.electron-glass.electron-native-acrylic .electron-root::after {
+  opacity: 0.14;
+}
+
+/* Win11 原生 Acrylic：圆角交给 DWM，web 层铺满窗口，避免 CSS 圆角大于系统圆角时四角露白 */
+html.electron-glass.electron-native-acrylic {
+  --shell-outer-radius: 8px;
+}
+
+html.electron-glass.electron-native-acrylic:not(.is-maximized),
+html.electron-glass.electron-native-acrylic:not(.is-maximized) body,
+html.electron-glass.electron-native-acrylic:not(.is-maximized) #app,
+html.electron-glass.electron-native-acrylic:not(.is-maximized) .electron-root {
+  border-radius: 0;
+  clip-path: none;
+  overflow: hidden;
+}
+
+html.electron-glass.electron-native-acrylic:not(.is-maximized) .electron-root {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+html.electron-glass.electron-native-acrylic:not(.is-maximized) .electron-root::before,
+html.electron-glass.electron-native-acrylic:not(.is-maximized) .electron-root::after {
+  border-radius: 0;
+}
+
+html.electron-glass.electron-screenshot-frost {
+  --electron-frost-tint: rgba(12, 12, 16, 0.32);
+}
+
+html.electron-glass,
+html.electron-glass body,
+html.electron-glass #app {
+  background: transparent !important;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+/* 根层圆角裁剪：Win10 回退用；Win11 Acrylic 由上方规则铺满窗口 */
+html.electron-glass:not(.electron-native-acrylic):not(.is-maximized),
+html.electron-glass:not(.electron-native-acrylic):not(.is-maximized) body,
+html.electron-glass:not(.electron-native-acrylic):not(.is-maximized) #app {
+  border-radius: var(--shell-outer-radius);
+  clip-path: inset(0 round var(--shell-outer-radius));
+  overflow: hidden;
+}
+
+html.electron-glass.is-maximized,
+html.electron-glass.is-maximized body,
+html.electron-glass.is-maximized #app {
+  border-radius: 0;
+  clip-path: none;
+}
+
+/* Win10 回退：桌面截图 + filter:blur */
+html.electron-glass.electron-screenshot-frost .electron-root .glass-desktop-bg {
+  position: absolute;
+  inset: -35%;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  filter: blur(var(--electron-frost-blur-img)) saturate(var(--electron-frost-saturate)) brightness(0.86);
+  -webkit-filter: blur(var(--electron-frost-blur-img)) saturate(var(--electron-frost-saturate)) brightness(0.86);
+  transform: scale(1.1);
+  transform-origin: center center;
+  will-change: filter;
+}
+
+/* 暗色薄 tint + 噪点（不再 backdrop-filter） */
+html.electron-glass .electron-root .glass-blur-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+  background: var(--electron-frost-tint);
+}
+
+html.electron-glass:not(.electron-native-acrylic):not(.is-maximized) .electron-root {
+  border-radius: var(--shell-outer-radius);
+  clip-path: inset(0 round var(--shell-outer-radius));
+  overflow: hidden;
+  background: transparent !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.2),
+    inset 1px 1px 0 rgba(255, 255, 255, 0.14),
+    0 20px 56px rgba(0, 0, 0, 0.45);
+}
+
+html.electron-glass:not(.is-maximized) .electron-root::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.2) 0%,
+    rgba(255, 255, 255, 0.05) 40%,
+    rgba(0, 0, 0, 0.1) 100%
+  );
+}
+
+html.electron-glass:not(.is-maximized) .electron-root::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+  opacity: 0.32;
+  mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 140px 140px;
+}
+
+html.electron-glass .electron-root {
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
 }
 
-.app.electron-shell .glass-scene {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
+html.electron-glass .electron-root > .electron-shell-titlebar {
+  flex: 0 0 var(--electron-titlebar-height, 40px);
+  min-height: var(--electron-titlebar-height, 40px);
+  position: relative;
+  z-index: 100000;
+}
+
+html.electron-glass .electron-root > .app.electron-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+}
+
+/* 标题栏置于 flex 顶部，层级高于缩放热区 */
+html.electron-glass .electron-shell-titlebar {
+  position: relative;
+  z-index: 100000;
+  flex-shrink: 0;
+  pointer-events: auto;
+  background: rgba(16, 16, 22, 0.92) !important;
+  border-bottom: 1px solid var(--glass-border-soft);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html.electron-glass .electron-root .window-resize-layer {
+  z-index: 20;
   pointer-events: none;
-  overflow: hidden;
-  background:
-    radial-gradient(ellipse 120% 80% at 50% 0%, #1a2744 0%, var(--glass-deep) 55%, #060a14 100%);
 }
 
-.app.electron-shell .glass-orb {
+/* 标题栏区域禁止缩放热区，避免挡住 — □ × */
+html.electron-glass .electron-root > .electron-shell-titlebar,
+html.electron-glass .electron-root > .electron-shell-titlebar * {
+  pointer-events: auto;
+}
+
+html.electron-glass:not(.is-maximized) .electron-root > *:not(.glass-blur-layer):not(.glass-desktop-bg):not(.window-resize-layer):not(.electron-shell-titlebar) {
+  position: relative;
+  z-index: 2;
+}
+
+html.electron-glass:not(.is-maximized) .electron-root > .electron-shell-titlebar {
+  position: relative;
+  z-index: 100000;
+}
+
+html.electron-glass .electron-shell-titlebar .titlebar-drag {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+html.electron-glass .electron-shell-titlebar .titlebar-controls,
+html.electron-glass .electron-shell-titlebar .win-btn {
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+html.electron-glass .electron-shell-titlebar.electron-titlebar--native-controls {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+html.electron-glass.is-maximized .electron-root {
+  border-radius: 0;
+  clip-path: none;
+  background: transparent !important;
+  box-shadow: none;
+}
+
+html.electron-glass.is-maximized .electron-root::before {
+  content: '';
   position: absolute;
-  border-radius: 50%;
-  filter: blur(72px);
-  opacity: 0.85;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0.02) 40%,
+    rgba(0, 0, 0, 0.1) 100%
+  );
 }
 
-.app.electron-shell .glass-orb--cyan {
-  width: 420px;
-  height: 420px;
-  top: -80px;
-  right: -60px;
-  background: rgba(56, 189, 248, 0.45);
+html.electron-glass.is-maximized .electron-root::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.32;
+  mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 140px 140px;
 }
 
-.app.electron-shell .glass-orb--violet {
-  width: 380px;
-  height: 380px;
-  bottom: -100px;
-  left: -80px;
-  background: rgba(139, 92, 246, 0.5);
+.electron-root {
+  /* 毛玻璃底色由 html.electron-glass .electron-root 控制，勿在此设为 transparent */
+}
+
+.app.electron-shell {
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.92);
+  --text-muted: rgba(255, 255, 255, 0.76);
+  --text-form: #ffffff;
+  --text-on-accent: #ffffff;
+  --accent-primary: #93c5fd;
+  --accent-primary-hover: #bfdbfe;
+  --accent-success: #6ee7b7;
+  --glass-border-soft: rgba(255, 255, 255, 0.2);
+  --glass-border: rgba(255, 255, 255, 0.28);
+  --glass-panel: rgba(255, 255, 255, 0.09);
+  --glass-panel-strong: rgba(255, 255, 255, 0.14);
+  --glass-panel-hover: rgba(255, 255, 255, 0.2);
+  --glass-blur: 120px;
+  --glass-saturate: 250%;
+  --glass-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23f8fafc' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  position: relative;
+  min-height: 100%;
+  height: 100%;
+  background: transparent;
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+.app.electron-shell.app-outer-glass {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.app.electron-shell.app-outer-glass::before {
+  display: none;
+}
+
+html.electron-glass .electron-root > .app.electron-shell.app-outer-glass {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+
+html.electron-glass.is-maximized .app.electron-shell.app-outer-glass,
+.electron-root.is-maximized .app.electron-shell.app-outer-glass {
+  border-radius: 0;
+  clip-path: none;
+  box-shadow: none;
 }
 
 .app.electron-shell > :not(.glass-scene) {
@@ -52,37 +315,116 @@ body:has(.electron-shell) {
   z-index: 1;
 }
 
-/* 窗口标题栏 */
-.app.electron-shell .electron-titlebar {
-  margin: 10px 12px 0;
-  border-radius: var(--glass-radius-sm);
-  background: var(--glass-panel);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  border: 1px solid var(--glass-border);
-  box-shadow: var(--shadow-sm);
+/*
+ * UI 层：禁止 backdrop-filter（否则会模糊程序内部其它区块，而不是桌面）
+ * 只保留极淡 tint，让下方 glass-blur-layer / 系统 Acrylic 透出来
+ */
+html.electron-glass .app.electron-shell,
+html.electron-glass .app.electron-shell * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
-.app.electron-shell .titlebar-title,
-.app.electron-shell .titlebar-badge {
-  color: var(--text-primary);
-}
-
-.app.electron-shell .titlebar-badge {
-  background: rgba(255, 255, 255, 0.12);
-  border: 1px solid var(--glass-border-soft);
+.app.electron-shell .app-sidebar,
+.app.electron-shell .main-content,
+.app.electron-shell .library-view,
+.app.electron-shell .chat-view,
+.app.electron-shell .workflow-view,
+.app.electron-shell .chat-sidebar,
+.app.electron-shell .chat-main,
+.app.electron-shell .library-toolbar,
+.app.electron-shell .library-sidebar,
+.app.electron-shell .library-content,
+.app.electron-shell .workflow-sidebar,
+.app.electron-shell .workflow-config-panel,
+.app.electron-shell .sidebar-panel {
+  background: transparent !important;
   box-shadow: none;
 }
 
-.app.electron-shell .win-btn {
-  border-left: 1px solid var(--glass-border-soft);
-  color: rgba(255, 255, 255, 0.9);
+html.electron-glass .electron-shell-titlebar {
+  background: rgba(16, 16, 22, 0.92) !important;
+  box-shadow: none;
 }
 
-/* 主布局 */
+.app.electron-shell .electron-titlebar,
+.electron-shell-titlebar,
+.app.electron-shell .app-sidebar,
+.app.electron-shell .main-content,
+.app.electron-shell .library-view,
+.app.electron-shell .chat-view,
+.app.electron-shell .workflow-view {
+  border: 1px solid var(--glass-border-soft);
+  border-radius: var(--glass-radius);
+}
+
+.app.electron-shell .electron-titlebar,
+.electron-shell-titlebar {
+  margin: 0;
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 0;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  overflow: hidden;
+}
+
+html.electron-glass:not(.is-maximized) .electron-shell-titlebar {
+  border-radius: var(--shell-outer-radius) var(--shell-outer-radius) 0 0;
+}
+
+.app.electron-shell .titlebar-title,
+.electron-shell-titlebar .titlebar-title,
+.app.electron-shell .win-btn,
+.electron-shell-titlebar .win-btn {
+  color: var(--text-inverse, #f8fafc);
+}
+
+.app.electron-shell .titlebar-badge,
+.electron-shell-titlebar .titlebar-badge {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--glass-border-soft);
+  border-radius: 999px;
+  color: var(--accent-primary);
+}
+
+.app.electron-shell .win-btn,
+.electron-shell-titlebar .win-btn {
+  border-left: 1px solid var(--glass-border-soft);
+}
+
+.app.electron-shell .win-btn:hover,
+.electron-shell-titlebar .win-btn:hover {
+  background: var(--glass-panel-hover);
+}
+
 .app.electron-shell .app-layout {
-  padding: 10px 12px 12px;
-  gap: 12px;
+  padding: 6px 8px 8px;
+  gap: 8px;
+}
+
+.app.electron-shell .app-sidebar {
+  height: 100% !important;
+  min-height: 0;
+  align-self: stretch;
+  border-radius: var(--glass-radius);
+  background: transparent !important;
+}
+
+.app.electron-shell .sidebar-footer {
+  position: relative;
+  z-index: 12;
+  flex-shrink: 0;
+  pointer-events: auto;
+}
+
+.app.electron-shell .sidebar-footer .settings-btn {
+  position: relative;
+  z-index: 13;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 .app.electron-shell .main-content,
@@ -90,270 +432,393 @@ body:has(.electron-shell) {
 .app.electron-shell .chat-view,
 .app.electron-shell .workflow-view {
   border-radius: var(--glass-radius);
-  background: var(--glass-panel);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  border: 1px solid var(--glass-border);
-  box-shadow: var(--glass-shadow);
   overflow: hidden;
 }
 
-/* —— 文档库 —— */
-.app.electron-shell .library-toolbar,
-.app.electron-shell .library-sidebar,
+.app.electron-shell .sidebar-brand-title,
+.app.electron-shell .nav-tab,
+.app.electron-shell .settings-btn {
+  color: var(--text-primary);
+}
+
+.app.electron-shell .nav-tab,
+.app.electron-shell .settings-btn,
+.app.electron-shell .lib-btn,
+.app.electron-shell .btn-secondary,
+.app.electron-shell .new-session-btn,
+.app.electron-shell .mode-tab,
+.app.electron-shell .doc-card,
+.app.electron-shell .space-item,
+.app.electron-shell .session-item,
+.app.electron-shell .logo-icon {
+  border-radius: var(--glass-radius-sm);
+}
+
+.app.electron-shell .app-sidebar .nav-tab.active,
+.app.electron-shell .doc-card.selected,
+.app.electron-shell .space-item.active,
+.app.electron-shell .session-item.active,
+.app.electron-shell .mode-tab.active {
+  background: rgba(147, 112, 219, 0.28);
+  border-color: rgba(196, 181, 253, 0.45);
+  color: #e9d5ff;
+  font-weight: 600;
+}
+
 .app.electron-shell .library-content,
-.app.electron-shell .content-header,
+.app.electron-shell .library-sidebar,
+.app.electron-shell .content-header {
+  background: transparent !important;
+}
+
 .app.electron-shell .space-item,
 .app.electron-shell .doc-card,
-.app.electron-shell .sidebar-panel {
-  background: rgba(255, 255, 255, 0.05);
+.app.electron-shell .workflow-canvas-wrap {
+  background: rgba(255, 255, 255, 0.06) !important;
   border-color: var(--glass-border-soft);
+  border-radius: var(--glass-radius-sm);
+}
+
+.app.electron-shell .canvas-area {
+  background-color: rgba(0, 0, 0, 0.06) !important;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
 }
 
 .app.electron-shell .doc-card:hover,
-.app.electron-shell .space-item:hover {
-  background: var(--glass-panel-hover);
-  border-color: var(--glass-border);
-}
-
-.app.electron-shell .doc-card.selected,
-.app.electron-shell .space-item.active {
-  background: rgba(125, 211, 252, 0.15);
-  border-color: rgba(125, 211, 252, 0.4);
+.app.electron-shell .space-item:hover,
+.app.electron-shell .session-item:hover {
+  background: var(--glass-panel-hover) !important;
 }
 
 .app.electron-shell .lib-btn,
-.app.electron-shell .space-action,
-.app.electron-shell .panel-edge-toggle {
-  background: var(--glass-panel-strong);
-  border: 1px solid var(--glass-border-soft);
-  border-radius: var(--glass-radius-sm);
-  box-shadow: none;
-  color: var(--text-primary);
-}
-
-/* —— 对话 —— */
-.app.electron-shell .chat-sidebar,
-.app.electron-shell .chat-sidebar-header,
-.app.electron-shell .chat-main,
-.app.electron-shell .chat-messages,
-.app.electron-shell .chat-input-area,
-.app.electron-shell .mode-selector {
-  background: transparent;
-  border-color: var(--glass-border-soft);
-}
-
-.app.electron-shell .session-item {
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--glass-radius-sm);
-  color: var(--text-secondary);
-}
-
-.app.electron-shell .session-item:hover,
-.app.electron-shell .session-item.active {
-  background: var(--glass-panel-hover);
-  border-color: var(--glass-border-soft);
-  color: var(--text-primary);
-}
-
+.app.electron-shell .btn-secondary,
+.app.electron-shell .icon-btn,
 .app.electron-shell .new-session-btn,
 .app.electron-shell .mode-tab,
-.app.electron-shell .quick-action {
-  background: var(--glass-panel-strong);
-  border: 1px solid var(--glass-border-soft);
-  border-radius: var(--glass-radius-sm);
-  box-shadow: none;
-  color: var(--text-secondary);
-}
-
-.app.electron-shell .mode-tab.active,
-.app.electron-shell .quick-action:hover {
-  background: rgba(125, 211, 252, 0.18);
-  border-color: rgba(125, 211, 252, 0.4);
-  color: #fff;
-}
-
-.app.electron-shell .welcome-state {
-  color: var(--text-secondary);
-}
-
-.app.electron-shell .welcome-icon {
-  background: var(--glass-panel-strong);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--glass-radius);
-  color: var(--accent-primary);
-}
-
-.app.electron-shell .message-avatar {
-  background: var(--glass-panel-strong);
+.app.electron-shell .settings-btn {
+  background: var(--glass-panel) !important;
   border: 1px solid var(--glass-border-soft);
   color: var(--text-primary);
 }
 
-.app.electron-shell .attachment-card {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--glass-border-soft);
+.app.electron-shell .btn-primary,
+.app.electron-shell .send-btn,
+.app.electron-shell .composer-send,
+.app.electron-shell .config-btn {
+  background: var(--gradient-primary);
+  border: 1px solid rgba(37, 99, 235, 0.4);
+  border-radius: var(--glass-radius-sm);
+  color: var(--text-on-accent);
 }
 
-/* —— 工作流 —— */
-.app.electron-shell .workflow-toolbar,
-.app.electron-shell .workflow-sidebar,
-.app.electron-shell .workflow-config-panel,
-.app.electron-shell .workflow-canvas-wrap,
-.app.electron-shell .canvas-area {
-  background: rgba(0, 0, 0, 0.12);
-  border-color: var(--glass-border-soft);
+.app.electron-shell input,
+.app.electron-shell textarea,
+.app.electron-shell select,
+.app.electron-shell .config-select,
+.app.electron-shell .library-io-select {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--glass-border-soft);
+  border-radius: var(--glass-radius-sm);
+  color: var(--text-form);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+
+.app.electron-shell select,
+.app.electron-shell .config-select,
+.app.electron-shell .library-io-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 8px 34px 8px 12px;
+  cursor: pointer;
+  background-image: var(--glass-select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 14px;
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.app.electron-shell select:hover,
+.app.electron-shell .config-select:hover,
+.app.electron-shell .library-io-select:hover {
+  background-color: rgba(255, 255, 255, 0.14);
+  border-color: var(--glass-border);
+}
+
+.app.electron-shell select:focus,
+.app.electron-shell .config-select:focus,
+.app.electron-shell .library-io-select:focus,
+.app.electron-shell input:focus,
+.app.electron-shell textarea:focus {
+  outline: none;
+  border-color: rgba(147, 197, 253, 0.55);
+  box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.18);
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.app.electron-shell select option,
+.app.electron-shell .config-select option,
+.app.electron-shell .library-io-select option {
+  background: #1a1a22;
+  color: #ffffff;
+}
+
+.app.electron-shell .message-bubble {
+  background: var(--glass-panel-strong) !important;
+  border: 1px solid var(--glass-border-soft);
+  border-radius: var(--glass-radius-sm);
+}
+
+.app.electron-shell .message.user .message-bubble {
+  background: rgba(255, 255, 255, 0.1) !important;
 }
 
 .app.electron-shell .workflow-node,
 .app.electron-shell .workflow-node-card,
 .app.electron-shell .canvas-node {
-  background: var(--glass-panel-strong);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1px solid var(--glass-border);
+  background: var(--glass-panel-strong) !important;
   border-radius: var(--glass-radius-sm);
-  box-shadow: var(--shadow-sm);
-}
-
-.app.electron-shell .lang-chip,
-.app.electron-shell .format-chip,
-.app.electron-shell .provider-panel .field select,
-.app.electron-shell .provider-panel .field input {
-  background: rgba(0, 0, 0, 0.22);
-  border: 1px solid var(--glass-border-soft);
-  color: var(--text-primary);
-}
-
-.app.electron-shell .lang-chip.active,
-.app.electron-shell .format-chip.active {
-  background: rgba(125, 211, 252, 0.2);
-  border-color: rgba(125, 211, 252, 0.45);
-  color: #fff;
-}
-
-/* —— 通用控件 —— */
-.app.electron-shell .btn-primary,
-.app.electron-shell .send-btn,
-.app.electron-shell .config-btn {
-  background: var(--gradient-primary);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: var(--glass-radius-sm);
-  box-shadow: none;
-  color: #fff;
-}
-
-.app.electron-shell .btn-secondary,
-.app.electron-shell .icon-btn,
-.app.electron-shell .header-btn,
-.app.electron-shell .session-action-btn {
-  background: var(--glass-panel-strong);
-  border: 1px solid var(--glass-border-soft);
-  border-radius: var(--glass-radius-sm);
-  box-shadow: none;
-  color: var(--text-primary);
-}
-
-.app.electron-shell .btn-secondary:hover,
-.app.electron-shell .icon-btn:hover,
-.app.electron-shell .lib-btn:hover {
-  background: var(--glass-panel-hover);
-}
-
-.app.electron-shell input,
-.app.electron-shell textarea,
-.app.electron-shell select {
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid var(--glass-border-soft);
-  border-radius: var(--glass-radius-sm);
-  color: var(--text-primary);
-  box-shadow: none;
-}
-
-.app.electron-shell input:focus,
-.app.electron-shell textarea:focus,
-.app.electron-shell select:focus {
-  border-color: rgba(125, 211, 252, 0.55);
-  box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.15);
-}
-
-.app.electron-shell .message-bubble {
-  background: var(--glass-panel-strong);
-  border: 1px solid var(--glass-border-soft);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  color: var(--text-primary);
-}
-
-.app.electron-shell .message.user .message-bubble {
-  background: linear-gradient(135deg, rgba(56, 189, 248, 0.45) 0%, rgba(99, 102, 241, 0.42) 100%);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  color: #fff;
-}
-
-.app.electron-shell .entity-preview,
-.app.electron-shell .settings-modal,
-.app.electron-shell .settings-overlay,
-.app.electron-shell .progress-bar-wrap {
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
 }
 
 .app.electron-shell .settings-overlay {
-  background: rgba(6, 10, 20, 0.6);
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .app.electron-shell .settings-modal {
-  background: rgba(15, 23, 42, 0.75);
-  border: 1px solid var(--glass-border);
+  background: rgba(22, 22, 28, 0.78);
+  backdrop-filter: blur(24px) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(24px) saturate(var(--glass-saturate));
+  border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: var(--glass-radius);
-  box-shadow: var(--glass-shadow);
+  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.5);
+  color: var(--text-primary);
 }
 
-.app.electron-shell .progress-bar {
-  background: rgba(255, 255, 255, 0.12);
+.app.electron-shell .settings-modal .settings-header h2,
+.app.electron-shell .settings-modal .field span {
+  color: var(--text-primary);
 }
 
-.app.electron-shell .progress-bar-fill {
-  background: var(--gradient-primary);
+.app.electron-shell .settings-modal .settings-subtitle,
+.app.electron-shell .settings-modal .settings-hint {
+  color: var(--text-muted);
 }
 
-.app.electron-shell .logo-icon,
-.app.electron-shell .nav-tab.active {
-  box-shadow: none;
+.app.electron-shell .settings-modal .provider-panel {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--glass-border-soft);
+  border-radius: var(--glass-radius-sm);
 }
 
-.app.electron-shell .app-sidebar .nav-tab.active {
-  background: rgba(125, 211, 252, 0.18);
-  border-color: rgba(125, 211, 252, 0.45);
-  color: #fff;
+.app.electron-shell .settings-modal .field input,
+.app.electron-shell .settings-modal .field select {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-form);
+  border-color: var(--glass-border-soft);
+  border-radius: 12px;
 }
 
-.app.electron-shell ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+.app.electron-shell .settings-modal .field select option {
+  background: #1a1a22;
+  color: #ffffff;
+}
+
+.app.electron-shell .settings-btn {
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 4px;
+  font-size: 10px;
+  line-height: 1.25;
+  text-align: center;
 }
 
 .app.electron-shell ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.18);
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
 }
 
-.app.electron-shell ::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-/* Markdown 正文在暗色玻璃上可读 */
 .app.electron-shell .md-content :is(h1, h2, h3, h4, p, li, code, pre) {
   color: var(--text-primary);
 }
 
 .app.electron-shell .md-content pre {
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid var(--glass-border-soft);
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: var(--glass-radius-sm);
 }
 
 .app.electron-shell .md-content code {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+}
+
+.app.electron-shell .canvas-step-bar--bottom {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+/* ========== 全局文字提亮 + 下拉/选项卡毛玻璃 ========== */
+.app.electron-shell .mode-label,
+.app.electron-shell .config-label,
+.app.electron-shell .field-label,
+.app.electron-shell .composer-step-label,
+.app.electron-shell .library-io-label,
+.app.electron-shell .message-time,
+.app.electron-shell .panel-title {
+  color: var(--text-secondary);
+}
+
+.app.electron-shell .welcome-title {
+  color: #ffffff;
+  text-shadow: 0 1px 12px rgba(147, 197, 253, 0.35);
+}
+
+.app.electron-shell .welcome-subtitle,
+.app.electron-shell .settings-subtitle,
+.app.electron-shell .settings-hint,
+.app.electron-shell .library-picker-hint,
+.app.electron-shell .files-empty,
+.app.electron-shell .assistant-empty-hint {
+  color: var(--text-muted);
+}
+
+.app.electron-shell .mode-selector {
+  background: rgba(255, 255, 255, 0.06);
+  border-bottom-color: var(--glass-border-soft);
+}
+
+.app.electron-shell .mode-tabs {
   background: rgba(255, 255, 255, 0.08);
+  border-color: var(--glass-border-soft);
+}
+
+.app.electron-shell .mode-tab {
+  color: var(--text-secondary);
+  border-radius: 8px;
+}
+
+.app.electron-shell .mode-tab:hover {
+  color: #ffffff;
+  background: var(--glass-panel-hover);
+}
+
+.app.electron-shell .mode-tab.active {
+  background: rgba(59, 130, 246, 0.55);
+  color: #ffffff;
+  border-color: rgba(147, 197, 253, 0.45);
+  box-shadow: 0 2px 10px rgba(59, 130, 246, 0.25);
+}
+
+.app.electron-shell .composer-toolbar {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.app.electron-shell .composer-type-pill,
+.app.electron-shell .composer-source-btn {
+  color: var(--text-secondary);
+}
+
+.app.electron-shell .composer-type-pill:hover,
+.app.electron-shell .composer-source-btn:hover,
+.app.electron-shell .composer-source-btn.active {
+  color: #ffffff;
+}
+
+.app.electron-shell .composer-toolbar-hint {
+  color: var(--text-muted);
+}
+
+.app.electron-shell .library-io-row {
+  gap: 10px;
+}
+
+.app.electron-shell .library-io-select {
+  min-width: 140px;
+}
+
+.app.electron-shell .library-picker-item {
+  color: var(--text-primary);
+  border-radius: 8px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.app.electron-shell .library-picker-item:hover {
+  background: var(--glass-panel-hover);
+}
+
+.app.electron-shell .library-picker-item.selected {
+  background: rgba(59, 130, 246, 0.22);
+  border-color: rgba(147, 197, 253, 0.45);
+  color: #ffffff;
+}
+
+.app.electron-shell .config-select,
+.app.electron-shell .workflow-config-panel select {
+  min-height: 40px;
+}
+
+.app.electron-shell .source-tabs {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--glass-border-soft);
+}
+
+.app.electron-shell .source-tab {
+  color: var(--text-secondary);
+}
+
+.app.electron-shell .source-tab:hover {
+  color: #ffffff;
+  background: var(--glass-panel-hover);
+}
+
+.app.electron-shell .source-tab.active {
+  background: rgba(59, 130, 246, 0.28);
+  border-color: rgba(147, 197, 253, 0.45);
+  color: #ffffff;
+}
+
+.app.electron-shell .lang-chip,
+.app.electron-shell .format-chip,
+.app.electron-shell .tag-chip {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--glass-border-soft);
+  border-radius: 8px;
+}
+
+.app.electron-shell .lang-chip:hover,
+.app.electron-shell .format-chip:hover,
+.app.electron-shell .tag-chip:hover {
+  color: #ffffff;
+  border-color: rgba(147, 197, 253, 0.45);
+  background: var(--glass-panel-hover);
+}
+
+.app.electron-shell .lang-chip.active,
+.app.electron-shell .format-chip.active,
+.app.electron-shell .tag-chip.active {
+  background: rgba(59, 130, 246, 0.28);
+  border-color: rgba(147, 197, 253, 0.5);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.app.electron-shell input::placeholder,
+.app.electron-shell textarea::placeholder,
+.app.electron-shell .composer-textarea::placeholder {
+  color: rgba(255, 255, 255, 0.52);
+  opacity: 1;
+}
+
+.app.electron-shell .attachment-name,
+.app.electron-shell .entity-preview-title,
+.app.electron-shell .progress-title {
+  color: var(--text-primary);
+}
+
+.app.electron-shell .attachment-meta,
+.app.electron-shell .entity-preview-more {
+  color: var(--text-muted);
 }

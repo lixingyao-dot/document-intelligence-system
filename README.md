@@ -115,7 +115,7 @@ desktop-electron/
   dist-electron/      # 安装包与 win-unpacked（构建后）
 ```
 
-本目录**可独立运行与打包**，不依赖仓库根的 `desktop-local/`；与根目录 `src/` 的关系见下文「与主线代码同步」。
+本目录**可独立运行与打包**：前端、API、Electron、业务代码 `src/` 的引用关系**仅在本文件夹内**完成，不依赖 `desktop-local/` 或 `extended-frontend/`。与仓库根 `src/` 的同步为可选项，见 [BUILD.md](BUILD.md) 与下文「与主线代码同步」。
 
 ---
 
@@ -139,19 +139,24 @@ cd desktop-electron
 
 首次运行会自动构建 `frontend/dist`（若不存在），并设置 `DOC_INTEL_DESKTOP=1`、`DOC_INTEL_ELECTRON=1`。
 
-### 打包安装程序
+### 打包安装程序（从头到尾 · 毛玻璃版）
 
 ```powershell
 cd desktop-electron
-.\scripts\build.ps1 -RebuildApi
+.\scripts\build.ps1
 ```
+
+或：`npm run build`（同上，自包含三步：前端 → API 内嵌 dist → Electron）。
+
+详细说明见 **[BUILD.md](BUILD.md)**。
 
 产物示例：
 
 - 安装包：`dist-electron\文档智能系统 Setup <版本>.exe`  
 - 免安装：`dist-electron\win-unpacked\文档智能系统.exe`
 
-仅重建 API、跳过前端时可使用 `.\scripts\build_api.ps1`。
+仅重建 API：`.\scripts\build_api.ps1` 或 `npm run build:api`。  
+**不要**只执行 `npm run build:electron`（不会更新内嵌前端）。
 
 ---
 
@@ -166,17 +171,17 @@ cd desktop-electron
 
 ---
 
-## 与主线代码同步
+## 与主线代码同步（可选）
 
-仓库根目录 `src/` 有更新时，可同步到本目录：
+本目录已自带完整 `src/`，日常开发与打包**无需**同步。若仓库根 `src/` 有业务更新，可**可选**执行：
 
 ```powershell
 cd desktop-electron
 .\scripts\sync_src.ps1
 ```
 
-同步会排除 `temp/`、`output/`、用户 `workspace/library` 等运行时数据。  
-**Electron 相关改动请优先在本目录完成**；与 `desktop-local`（pywebview 版）前端已分叉。
+同步会排除 `temp/`、`output/` 等运行时数据。  
+**界面与 Electron 相关改动请只在本目录 `frontend/`、`electron/` 完成**；与 `desktop-local`（pywebview + 像素风）已分叉。
 
 ---
 

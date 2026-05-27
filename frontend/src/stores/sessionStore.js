@@ -635,11 +635,9 @@ export const useSessionStore = defineStore('session', () => {
     return { uploadedFiles, uploadedTemplateFiles }
   }
 
-  // 清除所有选中的文件（仅本地缓冲区，不请求后端）
+  // 清除聊天区暂存附件（发送后清空，便于下次重新选择）
   function clearAllSelectedFiles() {
-    const fileStore = useFileStore()
-    fileStore.tempFiles.data.forEach(f => { f.is_selected = false })
-    fileStore.tempFiles.template.forEach(f => { f.is_selected = false })
+    useFileStore().clearAllFiles()
   }
 
   /** 上传区不展示/同步会话服务端文件列表，保留空实现以兼容创建/切换会话时的调用 */
@@ -1451,36 +1449,37 @@ export const useSessionStore = defineStore('session', () => {
     let allFiles = [...uploadedFiles]
     let allTemplateFiles = [...uploadedTemplateFiles]
 
-    if (hasPendingFiles) {
-      const totalFiles = tempFiles.length + tempTemplateFiles.length
-      isUploadingFiles.value = true
-      uploadProgress.value = `正在上传文件 (0/${totalFiles})...`
-
-      uploadTempFiles(tempFiles, tempTemplateFiles, (count, total) => {
-        uploadProgress.value = `正在上传文件 (${count}/${total})...`
-      })
-        .then(({ uploadedFiles: newFiles, uploadedTemplateFiles: newTemplateFiles }) => {
+    try {
+      if (hasPendingFiles) {
+        const totalFiles = tempFiles.length + tempTemplateFiles.length
+        isUploadingFiles.value = true
+        uploadProgress.value = `正在上传文件 (0/${totalFiles})...`
+        try {
+          const { uploadedFiles: newFiles, uploadedTemplateFiles: newTemplateFiles } =
+            await uploadTempFiles(tempFiles, tempTemplateFiles, (count, total) => {
+              uploadProgress.value = `正在上传文件 (${count}/${total})...`
+            })
           allFiles = [...allFiles, ...newFiles]
           allTemplateFiles = [...allTemplateFiles, ...newTemplateFiles]
-          isUploadingFiles.value = false
-
-          const msgIndex = messages.value.findIndex((m) => m.id === tempMsgId)
-          if (msgIndex > -1) {
-            messages.value[msgIndex].metadata = {
-              files: allFiles.map((f) => ({ ...f, pending: false })),
-              template_files: allTemplateFiles.map((f) => ({ ...f, pending: false })),
-            }
-          }
-
-          sendToBackend(sessionId, content.trim(), effectiveMode, allFiles, allTemplateFiles)
-        })
-        .catch((err) => {
+        } catch (err) {
           console.error('[sendMessage] 上传文件失败:', err)
+        } finally {
           isUploadingFiles.value = false
-          sendToBackend(sessionId, content.trim(), effectiveMode, allFiles, allTemplateFiles)
-        })
-    } else {
-      sendToBackend(sessionId, content.trim(), effectiveMode, allFiles, allTemplateFiles)
+        }
+
+        const msgIndex = messages.value.findIndex((m) => m.id === tempMsgId)
+        if (msgIndex > -1) {
+          messages.value[msgIndex].metadata = {
+            files: allFiles.map((f) => ({ ...f, pending: false })),
+            template_files: allTemplateFiles.map((f) => ({ ...f, pending: false })),
+          }
+        }
+      }
+
+      await sendToBackend(sessionId, content.trim(), effectiveMode, allFiles, allTemplateFiles)
+    } catch (e) {
+      console.error('[sendMessage] 发送失败:', e)
+      isStreaming.value = false
     }
   }
 

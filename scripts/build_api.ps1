@@ -6,11 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $AppRoot = Split-Path -Parent $PSScriptRoot
-
-function Stop-ApiExe {
-    Get-Process -Name "DocumentIntelligenceApi" -ErrorAction SilentlyContinue | Stop-Process -Force
-    Start-Sleep -Seconds 1
-}
+. (Join-Path $PSScriptRoot "BuildCommon.ps1")
 
 function Ensure-BuildVenv {
     $venv = Join-Path $AppRoot ".venv-build"
@@ -79,15 +75,17 @@ $excludeModules = @(
     "webview", "proxy_tools", "pythonnet", "clr_loader", "bottle"
 )
 
-if (-not $SkipFrontendBuild -and -not (Test-Path "$AppRoot\frontend\dist\index.html")) {
-    Write-Host "==> Building frontend (required for API bundle)..."
+if (-not $SkipFrontendBuild) {
+    Write-Host "==> Building glass frontend (required for API bundle)..."
     Set-Location "$AppRoot\frontend"
     if (-not (Test-Path "node_modules")) { npm install }
     npm run build
     Set-Location $AppRoot
 }
 
-Stop-ApiExe
+Assert-GlassFrontendDist -DistDir "$AppRoot\frontend\dist"
+
+Stop-LocalDesktopProcesses -AppRoot $AppRoot
 $dist = Join-Path $AppRoot "dist-api"
 if (Test-Path $dist) {
     try {
@@ -228,6 +226,10 @@ if (-not (Test-Path $outputPy)) {
 if (Test-Path (Join-Path $outDir "_internal\webview")) {
     throw "API bundle incorrectly includes pywebview. Delete dist-api and rerun build_api.ps1"
 }
+if (-not (Test-ApiBundleIncludesFreshFrontend -AppRoot $AppRoot -ApiExePath $exe)) {
+    throw "API bundle does not embed fresh glass frontend — check frontend/dist and rebuild."
+}
+
 Write-Host ""
-Write-Host "API bundle ready:"
+Write-Host "API bundle ready (glass UI embedded):"
 Write-Host "  $exe"

@@ -1,4 +1,5 @@
-# 从仓库根 src/ 同步到 desktop-electron/src/（排除运行时垃圾与用户数据）
+# 【可选】从仓库根 src/ 同步到 desktop-electron/src/（非日常打包必需）
+# 日常开发、毛玻璃 UI 打包均只依赖本目录；见 BUILD.md
 $ErrorActionPreference = "Stop"
 $AppRoot = Split-Path -Parent $PSScriptRoot
 $RepoRoot = Split-Path -Parent $AppRoot

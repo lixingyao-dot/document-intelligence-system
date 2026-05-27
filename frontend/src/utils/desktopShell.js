@@ -8,6 +8,15 @@ export function getDesktopWindowApi() {
   return window.docIntelDesktop?.window ?? null
 }
 
+export function getDesktopGlassMode() {
+  if (!isElectronShell()) return 'none'
+  return window.docIntelDesktop?.glassMode ?? 'none'
+}
+
+export function usesScreenshotBackdrop() {
+  return getDesktopGlassMode() === 'screenshot-fallback'
+}
+
 /** 选择工作流外部输出目录（仅 Electron） */
 export async function pickOutputFolder() {
   if (!isElectronShell()) return null

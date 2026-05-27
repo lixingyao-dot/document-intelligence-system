@@ -1,6 +1,6 @@
 {
   "name": "document-intelligence-desktop-electron",
-  "version": "1.0.4",
+  "version": "1.0.6",
   "description": "文档智能系统 · Electron 桌面版",
   "author": "Document Intelligence",
   "private": true,
@@ -8,7 +8,9 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
-    "build": "electron-builder --win",
+    "build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1",
+    "build:api": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_api.ps1",
+    "build:electron": "electron-builder --win",
     "build:dir": "electron-builder --win --dir"
   },
   "build": {

@@ -1,66 +1,21 @@
-# 完整发布：前端 + API exe + Electron 安装包（均在 desktop-electron 目录内）
+# 完整发布（自包含）：毛玻璃前端 → API exe（内嵌 dist）→ Electron 安装包
+# 所有产物与依赖路径均在 desktop-electron/ 内，不引用 desktop-local / extended-frontend
 param(
-    [switch]$RebuildApi,
-    [switch]$SkipApi
+    [switch]$SkipApi,
+    [switch]$SkipElectron
 )
 
 $ErrorActionPreference = "Stop"
 $AppRoot = Split-Path -Parent $PSScriptRoot
-
-function Test-ApiBundleFresh {
-    param([string]$ApiExePath)
-    if (-not (Test-Path -LiteralPath $ApiExePath)) { return $false }
-    $apiTime = (Get-Item -LiteralPath $ApiExePath).LastWriteTime
-    $watch = @(
-        (Join-Path $AppRoot "launcher.py"),
-        (Join-Path $AppRoot "server_entry.py"),
-        (Join-Path $AppRoot "scripts\build_api.ps1"),
-        (Join-Path $AppRoot "src\output\result_handler.py")
-    )
-    foreach ($dir in @("src", "backend")) {
-        $p = Join-Path $AppRoot $dir
-        if (Test-Path -LiteralPath $p) { $watch += $p }
-    }
-    $newest = $apiTime
-    foreach ($item in $watch) {
-        if (-not (Test-Path -LiteralPath $item)) { continue }
-        if ((Get-Item -LiteralPath $item).PSIsContainer) {
-            $f = Get-ChildItem -LiteralPath $item -Recurse -File -Include *.py,*.json -ErrorAction SilentlyContinue |
-                Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            if ($f -and $f.LastWriteTime -gt $newest) { return $false }
-        } elseif ((Get-Item -LiteralPath $item).LastWriteTime -gt $newest) {
-            return $false
-        }
-    }
-    return $true
-}
-
-function Stop-PackagedAppProcesses {
-    $names = @(
-        "electron",
-        "DocumentIntelligenceApi",
-        "DocumentIntelligenceDesktop",
-        "文档智能系统"
-    )
-    foreach ($name in $names) {
-        Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    }
-    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-        Where-Object {
-            $_.ExecutablePath -and (
-                $_.ExecutablePath -like "*\desktop-electron\dist-electron\*" -or
-                $_.ExecutablePath -like "*\DocumentIntelligenceApi.exe"
-            )
-        } |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    Start-Sleep -Seconds 2
-}
+. (Join-Path $PSScriptRoot "BuildCommon.ps1")
 
 function Clear-ElectronDistOutput {
-    $distRoot = Join-Path $AppRoot "dist-electron"
+    param([string]$Root)
+
+    $distRoot = Join-Path $Root "dist-electron"
     if (-not (Test-Path $distRoot)) { return }
 
-    Stop-PackagedAppProcesses
+    Stop-LocalDesktopProcesses -AppRoot $Root
 
     for ($attempt = 1; $attempt -le 5; $attempt++) {
         try {
@@ -68,58 +23,71 @@ function Clear-ElectronDistOutput {
             return
         } catch {
             Write-Host "Retry clearing dist-electron ($attempt/5)..."
-            Stop-PackagedAppProcesses
+            Stop-LocalDesktopProcesses -AppRoot $Root
             Start-Sleep -Seconds 2
         }
     }
 
-    $bak = Join-Path $AppRoot ("dist-electron.old." + [DateTime]::Now.ToString("yyyyMMddHHmmss"))
+    $bak = Join-Path $Root ("dist-electron.old." + [DateTime]::Now.ToString("yyyyMMddHHmmss"))
     try {
         Rename-Item -LiteralPath $distRoot -NewName (Split-Path -Leaf $bak) -Force -ErrorAction Stop
         Write-Host "WARN: dist-electron locked; renamed to $(Split-Path -Leaf $bak)"
     } catch {
         throw @"
-Cannot clear dist-electron (app.asar may be locked).
-Close any running 文档智能系统 window, then rerun build.ps1.
+Cannot clear dist-electron (files may be locked).
+Close any running 文档智能系统 window under this folder, then rerun build.ps1.
 "@
     }
 }
 
 Set-Location $AppRoot
+Stop-LocalDesktopProcesses -AppRoot $AppRoot
 
-Write-Host "==> Step 1/3: Build frontend"
+Write-Host "==> Step 1/3: Build glass frontend (frontend/)"
 Set-Location "$AppRoot\frontend"
 if (-not (Test-Path "node_modules")) { npm install }
 npm run build
 if (-not (Test-Path "dist\index.html")) {
-    throw "Frontend build failed"
+    throw "Frontend build failed: missing frontend/dist/index.html"
 }
+Assert-GlassFrontendDist -DistDir "$AppRoot\frontend\dist"
 
 $apiDir = Join-Path $AppRoot "dist-api\DocumentIntelligenceApi"
 $apiExe = Join-Path $apiDir "DocumentIntelligenceApi.exe"
 
-Write-Host "==> Step 2/3: Build API (PyInstaller)"
+Write-Host "==> Step 2/3: Build API bundle (embeds frontend/dist)"
 Set-Location $AppRoot
 if ($SkipApi -and (Test-Path -LiteralPath $apiExe)) {
-    Write-Host "    Skipped (-SkipApi). Using existing: $apiExe"
-} elseif (-not $RebuildApi -and (Test-ApiBundleFresh -ApiExePath $apiExe)) {
-    Write-Host "    Skipped (dist-api is newer than src; use -RebuildApi to force)."
+    if (-not (Test-ApiBundleIncludesFreshFrontend -AppRoot $AppRoot -ApiExePath $apiExe)) {
+        throw @"
+-SkipApi refused: dist-api frontend is stale or not glass UI.
+Run full build: .\scripts\build.ps1
+"@
+    }
+    Write-Host "    Skipped (-SkipApi). Using: $apiExe"
 } else {
     & "$PSScriptRoot\build_api.ps1" -SkipFrontendBuild
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    if (-not (Test-ApiBundleIncludesFreshFrontend -AppRoot $AppRoot -ApiExePath $apiExe)) {
+        throw "API bundle verification failed after build_api.ps1"
+    }
 }
 
-if (-not (Test-Path -LiteralPath $apiExe)) {
-    throw "Missing API exe: $apiExe — run .\scripts\build_api.ps1 first"
-}
 if (Test-Path (Join-Path $apiDir "_internal\webview")) {
-    throw "dist-api contains pywebview — use build_api.ps1 only, not pywebview desktop build."
+    throw "dist-api contains pywebview — use build_api.ps1 only (Electron path, not desktop-local)."
+}
+
+if ($SkipElectron) {
+    Write-Host ""
+    Write-Host "Done (API only, -SkipElectron). API:"
+    Write-Host "  $apiExe"
+    exit 0
 }
 
 Write-Host "==> Step 3/3: electron-builder"
 Set-Location $AppRoot
 
-Write-Host "    Regenerate app-icon.ico (NSIS requires >= 256x256)"
+Write-Host "    Regenerate app-icon.ico"
 $py = "python"
 if (Test-Path (Join-Path $AppRoot ".venv-build\Scripts\python.exe")) {
     $py = Join-Path $AppRoot ".venv-build\Scripts\python.exe"
@@ -127,11 +95,17 @@ if (Test-Path (Join-Path $AppRoot ".venv-build\Scripts\python.exe")) {
 & $py "$PSScriptRoot\generate_app_icon.py"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-Clear-ElectronDistOutput
+Clear-ElectronDistOutput -Root $AppRoot
 if (-not (Test-Path "node_modules")) { npm install }
-npm run build
+npm run build:electron
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+$unpackedHtml = Join-Path $AppRoot "dist-electron\win-unpacked\resources\backend\DocumentIntelligenceApi\_internal\frontend\dist"
+if (Test-Path $unpackedHtml) {
+    Assert-GlassFrontendDist -DistDir $unpackedHtml -Label "packaged frontend"
+}
+
 Write-Host ""
-Write-Host "Done. Installer / unpacked app:"
+Write-Host "Done. Self-contained installer / unpacked app:"
 Write-Host "  $AppRoot\dist-electron"
+Write-Host "  Run: dist-electron\win-unpacked\文档智能系统.exe"

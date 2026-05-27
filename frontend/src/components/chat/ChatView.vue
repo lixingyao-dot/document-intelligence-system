@@ -3,7 +3,7 @@ defineOptions({ name: 'ChatView' })
 
 import { ref, onMounted, onUnmounted, onActivated, nextTick, watch, computed } from 'vue'
 import { marked } from 'marked'
-import { MessagesSquare, Paperclip, Send, ChevronDown, ChevronRight, User, Bot, Info, Loader2 } from 'lucide-vue-next'
+import { MessagesSquare, Send, FolderOpen, Upload, X, User, Bot, Info, Loader2 } from 'lucide-vue-next'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useFileStore } from '../../stores/fileStore'
 import { useLibraryStore } from '../../stores/libraryStore'
@@ -26,7 +26,22 @@ const inputText = ref('')
 const textareaRef = ref(null)
 const previewEntities = ref({})
 const libraryPickerOpen = ref(false)
+const attachSource = ref(null)
 const isDragover = ref(false)
+
+const selectedDataFiles = computed(() =>
+  fileStore.tempFiles.data.filter((f) => f.is_selected),
+)
+const selectedTemplateFiles = computed(() =>
+  fileStore.tempFiles.template.filter((f) => f.is_selected),
+)
+const hasSelectedFiles = computed(
+  () => selectedDataFiles.value.length + selectedTemplateFiles.value.length > 0,
+)
+const allSelectedChips = computed(() => [
+  ...selectedDataFiles.value.map((f) => ({ ...f, _type: 'data' })),
+  ...selectedTemplateFiles.value.map((f) => ({ ...f, _type: 'template' })),
+])
 
 const showProgress = computed(() => sessionStore.showProgressBar)
 const progressVal = computed(() => sessionStore.progressValue)
@@ -117,6 +132,8 @@ async function sendMessage() {
   if (!text) return
 
   await sessionStore.sendMessage(text, sessionStore.currentMode)
+  libraryPickerOpen.value = false
+  attachSource.value = null
   inputText.value = ''
   if (textareaRef.value) {
     textareaRef.value.style.height = 'auto'
@@ -127,14 +144,23 @@ async function onPickerSpaceChange(event) {
   await fileStore.setPickerSpace(event.target.value)
 }
 
-function toggleLibraryPicker() {
-  libraryPickerOpen.value = !libraryPickerOpen.value
+function openLibraryAttach() {
   if (libraryPickerOpen.value) {
-    fileStore.filesPanelCollapsed = false
-    if (fileStore.pickerSpaceId) {
-      fileStore.loadPickerDocs()
-    }
+    libraryPickerOpen.value = false
+    attachSource.value = null
+    return
   }
+  attachSource.value = 'library'
+  libraryPickerOpen.value = true
+  if (fileStore.pickerSpaceId) {
+    fileStore.loadPickerDocs()
+  }
+}
+
+function openLocalAttach() {
+  attachSource.value = 'local'
+  libraryPickerOpen.value = false
+  triggerFileInput()
 }
 
 function handleDragOver(e) {
@@ -151,16 +177,19 @@ function handleDrop(e) {
   isDragover.value = false
   const files = Array.from(e.dataTransfer?.files || [])
   if (files.length > 0) {
-    files.forEach((file) => fileStore.addFile(fileStore.currentFileType, file))
-    fileStore.filesPanelCollapsed = false
+    const type = fileStore.currentFileType
+    files.forEach((file) => fileStore.addFile(type, file))
+    attachSource.value = 'local'
+    libraryPickerOpen.value = false
   }
 }
 
 function handleFileInput(e) {
   const files = Array.from(e.target.files || [])
   if (files.length > 0) {
-    files.forEach((file) => fileStore.addFile(fileStore.currentFileType, file))
-    fileStore.filesPanelCollapsed = false
+    const type = fileStore.currentFileType
+    files.forEach((file) => fileStore.addFile(type, file))
+    attachSource.value = null
   }
 }
 
@@ -179,9 +208,6 @@ function togglePickerDoc(doc) {
 
 function switchFileType(type) {
   fileStore.switchFileType(type)
-  if (!libraryPickerOpen.value) {
-    fileStore.filesPanelCollapsed = false
-  }
 }
 
 function removeFile(id, type) {
@@ -193,6 +219,19 @@ function formatFileSize(bytes) {
   if (bytes < 1024) return bytes + ' B'
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+/** 附件条展示用短名，完整名放 title */
+function truncateFileName(name, max = 26) {
+  const s = String(name || '').trim()
+  if (s.length <= max) return s
+  const dot = s.lastIndexOf('.')
+  if (dot > 0 && dot < s.length - 1) {
+    const ext = s.slice(dot)
+    const baseMax = Math.max(6, max - ext.length - 1)
+    return `${s.slice(0, baseMax)}…${ext}`
+  }
+  return `${s.slice(0, max - 1)}…`
 }
 
 function getFileExt(fileName) {
@@ -812,156 +851,139 @@ function userMessageAttachments(msg) {
       </div>
 
       <div class="chat-input-area">
-        <div class="chat-input-row">
-          <div
-            class="file-drop-zone"
-            :class="{ dragover: isDragover }"
-            @dragover="handleDragOver"
-            @dragleave="handleDragLeave"
-            @drop="handleDrop"
-            @click="triggerFileInput"
-          >
-            <span class="file-drop-zone-icon" aria-hidden="true">
-              <Paperclip :size="20" :stroke-width="2" />
-            </span>
-            <span class="file-drop-zone-text">
-              拖拽或 <span @click.stop="triggerFileInput">浏览</span> 选文件
-            </span>
-            <button type="button" class="library-attach-btn" @click.stop="toggleLibraryPicker">
-              文档库
-            </button>
-            <div class="file-type-switcher">
-              <button
-                class="file-type-btn"
-                :class="{ active: fileStore.currentFileType === 'data' }"
-                data-type="data"
-                @click.stop="switchFileType('data')"
-              >
-                数据 {{ fileStore.selectedDataCount }}
-              </button>
+        <div
+          class="chat-composer"
+          :class="{ 'chat-composer--dragover': isDragover }"
+          @dragover="handleDragOver"
+          @dragleave="handleDragLeave"
+          @drop="handleDrop"
+        >
+          <div v-if="hasSelectedFiles" class="composer-attachments">
+            <div
+              v-for="file in allSelectedChips"
+              :key="`${file._type}-${file.id}`"
+              class="composer-chip"
+              :class="`composer-chip--${file._type}`"
+            >
+              <span class="composer-chip-type">{{ file._type === 'template' ? '模板' : '数据' }}</span>
+              <span class="composer-chip-name" :title="file.file_name">{{ truncateFileName(file.file_name) }}</span>
               <button
                 type="button"
-                class="file-type-btn"
-                :class="{ active: fileStore.currentFileType === 'template' }"
-                data-type="template"
-                @click.stop="switchFileType('template')"
+                class="composer-chip-remove"
+                aria-label="移除附件"
+                @click.stop="removeFile(file.id, file._type)"
               >
-                模板 {{ fileStore.selectedTemplateCount }}
+                <X :size="14" :stroke-width="2" />
               </button>
             </div>
           </div>
 
-          <div class="chat-input-wrapper">
-            <div class="chat-input">
+          <div class="composer-box">
+            <div class="composer-main">
               <textarea
                 ref="textareaRef"
                 v-model="inputText"
+                class="composer-textarea"
                 rows="1"
-                placeholder="输入消息..."
+                placeholder="输入消息，Enter 发送，Shift+Enter 换行"
                 @keydown="handleKeyDown"
                 @input="autoResize"
-              ></textarea>
+              />
+              <button
+                type="button"
+                class="composer-send"
+                :class="{ loading: sessionStore.isStreaming }"
+                title="发送"
+                aria-label="发送"
+                :disabled="!inputText.trim() || sessionStore.isStreaming"
+                @click="sendMessage"
+              >
+                <span v-if="!sessionStore.isStreaming" class="send-btn-ico" aria-hidden="true">
+                  <Send :size="18" :stroke-width="2.2" />
+                </span>
+                <span v-else class="send-spinner" aria-hidden="true" />
+              </button>
             </div>
-            <button
-              class="send-btn"
-              :class="{ loading: sessionStore.isStreaming }"
-              @click="sendMessage"
-              :disabled="!inputText.trim() || sessionStore.isStreaming"
-            >
-              <span v-if="!sessionStore.isStreaming" class="send-btn-ico" aria-hidden="true">
-                <Send :size="18" :stroke-width="2.2" />
-              </span>
-              <span v-else class="send-spinner"></span>
-            </button>
-          </div>
-        </div>
 
-        <!-- Uploaded Files Panel -->
-        <div class="uploaded-files-panel">
-          <div class="panel-header" @click="fileStore.toggleFilesPanel">
-            <span class="panel-title">
-              已选文件
-              <span v-if="fileStore.selectedDataCount + fileStore.selectedTemplateCount > 0" class="file-count">
-                ({{ fileStore.selectedDataCount + fileStore.selectedTemplateCount }})
+            <div class="composer-toolbar composer-toolbar--flow">
+              <div class="composer-step">
+                <span class="composer-step-label">类型</span>
+                <div class="composer-step-pills">
+                  <button
+                    type="button"
+                    class="composer-type-pill composer-type-pill--data"
+                    :class="{ active: fileStore.currentFileType === 'data' }"
+                    @click="switchFileType('data')"
+                  >
+                    数据<span v-if="fileStore.selectedDataCount" class="composer-pill-count">{{ fileStore.selectedDataCount }}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="composer-type-pill composer-type-pill--template"
+                    :class="{ active: fileStore.currentFileType === 'template' }"
+                    @click="switchFileType('template')"
+                  >
+                    模板<span v-if="fileStore.selectedTemplateCount" class="composer-pill-count">{{ fileStore.selectedTemplateCount }}</span>
+                  </button>
+                </div>
+              </div>
+              <span class="composer-toolbar-divider" aria-hidden="true" />
+              <div class="composer-step">
+                <span class="composer-step-label">来源</span>
+                <div class="composer-step-actions">
+                  <button
+                    type="button"
+                    class="composer-source-btn"
+                    :class="{ active: libraryPickerOpen }"
+                    @click="openLibraryAttach"
+                  >
+                    <FolderOpen :size="15" :stroke-width="2" />
+                    文档库
+                  </button>
+                  <button
+                    type="button"
+                    class="composer-source-btn"
+                    :class="{ active: attachSource === 'local' && !libraryPickerOpen }"
+                    @click="openLocalAttach"
+                  >
+                    <Upload :size="15" :stroke-width="2" />
+                    本地文件
+                  </button>
+                </div>
+              </div>
+              <span class="composer-toolbar-hint">
+                当前添加为「{{ fileStore.currentFileType === 'template' ? '模板' : '数据' }}」；发送后附件自动清空
               </span>
-            </span>
-            <span class="panel-toggle" :class="{ collapsed: fileStore.filesPanelCollapsed }" aria-hidden="true">
-              <ChevronRight v-if="fileStore.filesPanelCollapsed" :size="16" :stroke-width="2" />
-              <ChevronDown v-else :size="16" :stroke-width="2" />
-            </span>
+            </div>
           </div>
-          <div class="panel-content" :class="{ collapsed: fileStore.filesPanelCollapsed }">
+
+          <div v-if="libraryPickerOpen" class="composer-library-panel">
             <div class="library-io-row">
-              <label class="library-io-label">输入文档库</label>
+              <label class="library-io-label">文档库空间</label>
               <select class="library-io-select" :value="fileStore.pickerSpaceId" @change="onPickerSpaceChange">
                 <option value="">选择空间</option>
                 <option v-for="s in libraryStore.spaces" :key="s.id" :value="s.id">{{ s.name }}</option>
               </select>
             </div>
-            <div v-if="libraryPickerOpen" class="library-picker-panel">
-              <p class="library-picker-hint">
-                当前勾选为「{{ fileStore.currentFileType === 'template' ? '模板' : '数据' }}」；切换请点击上方「数据 / 模板」
-              </p>
-              <input class="library-picker-search" placeholder="搜索文档…" :value="fileStore.searchQuery" @input="fileStore.setSearchQuery($event.target.value)" />
-              <div v-if="fileStore.isLoadingDocs" class="files-empty">加载中…</div>
-              <div v-else-if="!fileStore.pickerSpaceId" class="files-empty"><span class="empty-text">请先选择输入文档库</span></div>
-              <div v-else-if="fileStore.pickerDocs.length === 0" class="files-empty"><span class="empty-text">该空间暂无文档</span></div>
-              <div v-else class="library-picker-list">
-                <div v-for="doc in fileStore.pickerDocs" :key="doc.id" class="library-picker-item" :class="{ selected: fileStore.isDocInSelection(doc.id, fileStore.currentFileType) }" @click="togglePickerDoc(doc)">
-                  <span class="library-picker-name">{{ doc.name }}</span>
-                </div>
-              </div>
+            <p class="library-picker-hint">
+              从文档库勾选「{{ fileStore.currentFileType === 'template' ? '模板' : '数据' }}」文件；切换类型请点上方「数据 / 模板」
+            </p>
+            <div v-if="fileStore.isLoadingDocs" class="files-empty">加载中…</div>
+            <div v-else-if="!fileStore.pickerSpaceId" class="files-empty">
+              <span class="empty-text">请先选择文档库空间</span>
             </div>
-            <div v-if="fileStore.selectedDataCount + fileStore.selectedTemplateCount === 0 && !libraryPickerOpen" class="files-empty">
-              <span class="empty-text">从文档库勾选数据/模板后发送；生成完成后在结果区点击「保存…」另存到本地</span>
+            <div v-else-if="fileStore.pickerDocs.length === 0" class="files-empty">
+              <span class="empty-text">该空间暂无文档</span>
             </div>
-            <div v-if="fileStore.selectedDataCount + fileStore.selectedTemplateCount > 0" class="files-row">
-              <!-- Data Files -->
-              <div v-if="fileStore.hasDataFiles" class="files-group">
-                <span class="files-label">数据文件:</span>
-                <div class="files-tags">
-                  <div
-                    v-for="file in fileStore.tempFiles.data"
-                    :key="file.id"
-                    class="file-tag"
-                    :class="{ selected: file.is_selected }"
-                  >
-                    <input
-                      type="checkbox"
-                      :checked="file.is_selected"
-                      @change="fileStore.toggleFileSelection(file.id, 'data', $event.target.checked)"
-                      class="file-checkbox"
-                    />
-                    <span class="file-thumb-dot" aria-hidden="true" />
-                    <span class="file-tag-name" :title="file.file_name">{{ file.file_name }}</span>
-                    <span class="file-size-small">{{ formatFileSize(file.file_size) }}</span>
-                    <button class="file-tag-remove" @click.stop="fileStore.removeFile(file.id, 'data')">×</button>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Template Files -->
-              <div v-if="fileStore.hasTemplateFiles" class="files-group">
-                <span class="files-label">模板文件:</span>
-                <div class="files-tags">
-                  <div
-                    v-for="file in fileStore.tempFiles.template"
-                    :key="file.id"
-                    class="file-tag template"
-                    :class="{ selected: file.is_selected }"
-                  >
-                    <input
-                      type="checkbox"
-                      :checked="file.is_selected"
-                      @change="fileStore.toggleFileSelection(file.id, 'template', $event.target.checked)"
-                      class="file-checkbox"
-                    />
-                    <span class="file-thumb-dot" aria-hidden="true" />
-                    <span class="file-tag-name" :title="file.file_name">{{ file.file_name }}</span>
-                    <span class="file-size-small">{{ formatFileSize(file.file_size) }}</span>
-                    <button class="file-tag-remove" @click.stop="fileStore.removeFile(file.id, 'template')">×</button>
-                  </div>
-                </div>
+            <div v-else class="library-picker-list">
+              <div
+                v-for="doc in fileStore.pickerDocs"
+                :key="doc.id"
+                class="library-picker-item"
+                :class="{ selected: fileStore.isDocInSelection(doc.id, fileStore.currentFileType) }"
+                @click="togglePickerDoc(doc)"
+              >
+                <span class="library-picker-name" :title="doc.name">{{ truncateFileName(doc.name, 36) }}</span>
               </div>
             </div>
           </div>
@@ -1246,24 +1268,295 @@ function userMessageAttachments(msg) {
   padding: 6px 0;
 }
 
-.file-drop-zone .library-attach-btn {
+/* ============ 聊天输入区（附件在上 + 圆角输入框） ============ */
+.chat-input-area {
+  display: flex;
+  justify-content: center;
+  padding: 12px 20px 18px;
+}
+
+.chat-composer {
+  width: 100%;
+  max-width: 820px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-composer--dragover .composer-box {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+}
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 2px;
+}
+
+.composer-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  margin-left: 4px;
+  gap: 6px;
+  max-width: min(240px, 100%);
+  padding: 4px 8px 4px 10px;
+  border-radius: 999px;
   border: 1px solid var(--glass-border-soft);
-  border-radius: 8px;
   background: var(--glass-panel-strong);
-  color: var(--text-secondary);
   font-size: 12px;
+  line-height: 1.3;
+}
+
+.composer-chip--data {
+  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.composer-chip--template {
+  border-color: rgba(99, 102, 241, 0.35);
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.composer-chip-type {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.composer-chip--data .composer-chip-type {
+  color: var(--accent-success);
+}
+
+.composer-chip--template .composer-chip-type {
+  color: var(--accent-primary);
+}
+
+.composer-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  min-width: 0;
+}
+
+.composer-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
   cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.composer-chip-remove:hover {
+  background: rgba(220, 38, 38, 0.15);
+  color: var(--accent-danger);
+}
+
+.composer-box {
+  border: 1px solid var(--glass-border-soft);
+  border-radius: var(--glass-radius);
+  background: var(--glass-panel-strong);
+  overflow: hidden;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.composer-main {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 12px 8px;
+}
+
+.composer-textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 24px;
+  max-height: 200px;
+  padding: 8px 4px;
+  border: none;
+  background: transparent;
+  resize: none;
+  outline: none;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  font-family: inherit;
+}
+
+.composer-textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.composer-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 2px;
+  padding: 0;
+  border: none;
+  border-radius: 12px;
+  background: var(--gradient-primary);
+  color: #fff;
+  cursor: pointer;
+  transition: transform 0.15s, opacity 0.15s, box-shadow 0.15s;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.28);
+}
+
+.composer-send:hover:not(:disabled) {
+  transform: scale(1.04);
+}
+
+.composer-send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.composer-send .send-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: composer-spin 0.7s linear infinite;
+}
+
+@keyframes composer-spin {
+  to { transform: rotate(360deg); }
+}
+
+.composer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px 8px;
+  border-top: 1px solid var(--glass-border-soft);
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.composer-toolbar--flow {
+  gap: 10px 14px;
+}
+
+.composer-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-shrink: 0;
 }
 
-.file-drop-zone .library-attach-btn:hover {
-  border-color: var(--accent-primary);
+.composer-step-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.composer-step-pills,
+.composer-step-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.composer-pill-count {
+  margin-left: 2px;
+  opacity: 0.85;
+}
+
+.composer-source-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.composer-source-btn:hover,
+.composer-source-btn.active {
+  background: var(--glass-panel-hover);
+  border-color: var(--glass-border-soft);
   color: var(--accent-primary);
+}
+
+.composer-toolbar-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--glass-border-soft);
+  flex-shrink: 0;
+}
+
+.composer-type-pill {
+  padding: 3px 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.composer-type-pill:hover {
+  color: var(--text-primary);
+  background: var(--glass-panel-hover);
+}
+
+.composer-type-pill--data.active {
+  color: var(--accent-success);
+  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.composer-type-pill--template.active {
+  color: var(--accent-primary);
+  border-color: rgba(99, 102, 241, 0.4);
+  background: rgba(99, 102, 241, 0.12);
+}
+
+.composer-toolbar-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .composer-toolbar-hint {
+    display: none;
+  }
+}
+
+.composer-library-panel {
+  border: 1px solid var(--glass-border-soft);
+  border-radius: var(--glass-radius-sm);
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow: auto;
+  background: var(--glass-panel-strong);
 }
 
 .library-io-row {
@@ -1281,13 +1574,8 @@ function userMessageAttachments(msg) {
 
 .library-io-select {
   flex: 1;
-  min-width: 120px;
-  padding: 6px 8px;
-  font-size: 13px;
-  border: 1px solid var(--glass-border-soft);
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.25);
-  color: var(--text-primary);
+  min-width: 140px;
+  max-width: 100%;
 }
 
 .library-picker-panel {
@@ -1307,17 +1595,6 @@ function userMessageAttachments(msg) {
   line-height: 1.4;
 }
 
-.library-picker-search {
-  width: 100%;
-  padding: 6px 8px;
-  margin-bottom: 8px;
-  font-size: 13px;
-  border: 1px solid var(--glass-border-soft);
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.25);
-  color: var(--text-primary);
-}
-
 .library-picker-item {
   display: flex;
   align-items: center;
@@ -1326,7 +1603,7 @@ function userMessageAttachments(msg) {
   cursor: pointer;
   border-radius: 8px;
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
 
 .library-picker-item:hover {

@@ -1,59 +1,68 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
+
 /* ===========================
    CSS Variables & Global Styles
    =========================== */
 
 :root {
-  /* 毛玻璃暗色主题（全站默认） */
-  --glass-deep: #0b1020;
-  --glass-panel: rgba(255, 255, 255, 0.08);
-  --glass-panel-strong: rgba(255, 255, 255, 0.12);
-  --glass-panel-hover: rgba(255, 255, 255, 0.16);
-  --glass-border: rgba(255, 255, 255, 0.2);
-  --glass-border-soft: rgba(255, 255, 255, 0.1);
+  /* 透明毛玻璃 */
+  --glass-deep: transparent;
+  --glass-scene-top: transparent;
+  --glass-scene-mid: transparent;
+  --glass-scene-bottom: transparent;
+  --shell-outer-radius: 16px;
+  --glass-panel: rgba(255, 255, 255, 0.12);
+  --glass-panel-strong: rgba(255, 255, 255, 0.18);
+  --glass-panel-hover: rgba(255, 255, 255, 0.28);
+  --glass-border: rgba(255, 255, 255, 0.45);
+  --glass-border-soft: rgba(255, 255, 255, 0.3);
   --glass-blur: 22px;
-  --glass-radius: 22px;
+  --glass-saturate: 180%;
+  --glass-radius: 18px;
   --glass-radius-sm: 14px;
-  --glass-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+  --glass-shadow: 0 8px 32px rgba(31, 38, 135, 0.12);
 
   --bg-primary: transparent;
   --bg-secondary: var(--glass-panel);
   --bg-tertiary: var(--glass-panel-strong);
   --bg-card: var(--glass-panel-strong);
   --bg-hover: var(--glass-panel-hover);
-  --bg-active: rgba(255, 255, 255, 0.2);
+  --bg-active: rgba(255, 255, 255, 0.48);
 
-  --text-primary: rgba(255, 255, 255, 0.95);
-  --text-secondary: rgba(255, 255, 255, 0.72);
-  --text-muted: rgba(255, 255, 255, 0.5);
-  --text-inverse: #0b1020;
+  --text-primary: #1f2937;
+  --text-secondary: #4b5563;
+  --text-muted: #6b7280;
+  --text-form: #374151;
+  --text-inverse: #f8fafc;
+  --text-on-accent: #ffffff;
 
   --border-color: var(--glass-border-soft);
   --border-color-hover: var(--glass-border);
   --border-thick: 1px;
 
-  --accent-primary: #7dd3fc;
-  --accent-primary-hover: #38bdf8;
-  --accent-success: #4ade80;
-  --accent-warning: #fbbf24;
-  --accent-danger: #f87171;
-  --accent-purple: #a78bfa;
-  --accent-cyan: #22d3ee;
-  --accent-pink: #f472b6;
+  --accent-primary: #2563eb;
+  --accent-primary-hover: #1d4ed8;
+  --accent-success: #059669;
+  --accent-warning: #d97706;
+  --accent-danger: #dc2626;
+  --accent-purple: #7c3aed;
+  --accent-cyan: #0891b2;
+  --accent-pink: #db2777;
 
-  --gradient-primary: linear-gradient(135deg, rgba(56, 189, 248, 0.55) 0%, rgba(129, 140, 248, 0.5) 100%);
-  --gradient-success: linear-gradient(135deg, rgba(74, 222, 128, 0.5) 0%, rgba(34, 197, 94, 0.45) 100%);
-  --gradient-warning: linear-gradient(135deg, rgba(251, 191, 36, 0.5) 0%, rgba(245, 158, 11, 0.45) 100%);
-  --gradient-cyan: linear-gradient(135deg, rgba(34, 211, 238, 0.5) 0%, rgba(6, 182, 212, 0.45) 100%);
+  --gradient-primary: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  --gradient-success: linear-gradient(135deg, rgba(134, 239, 172, 0.55) 0%, rgba(74, 222, 128, 0.4) 100%);
+  --gradient-warning: linear-gradient(135deg, rgba(252, 211, 77, 0.55) 0%, rgba(251, 191, 36, 0.4) 100%);
+  --gradient-cyan: linear-gradient(135deg, rgba(165, 243, 252, 0.5) 0%, rgba(103, 232, 249, 0.35) 100%);
 
-  --shadow-sm: 0 4px 16px rgba(0, 0, 0, 0.2);
-  --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.28);
+  --shadow-sm: 0 4px 16px rgba(55, 65, 81, 0.12);
+  --shadow-md: 0 8px 28px rgba(55, 65, 81, 0.14);
   --shadow-lg: var(--glass-shadow);
-  --shadow-glow: 0 0 0 1px rgba(255, 255, 255, 0.15), 0 0 24px rgba(125, 211, 252, 0.2);
+  --shadow-glow: 0 0 0 1px rgba(255, 255, 255, 0.28), 0 0 20px rgba(156, 163, 175, 0.2);
 
-  --radius-sm: 10px;
-  --radius-md: 14px;
-  --radius-lg: 18px;
-  --radius-xl: 22px;
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 20px;
+  --radius-xl: 24px;
 
   --electron-titlebar-height: 40px;
   --header-height: 56px;
@@ -69,6 +78,19 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+#app {
+  position: relative;
+}
+
 html {
   image-rendering: auto;
 }
@@ -80,10 +102,10 @@ canvas {
 }
 
 body {
-  font-family: 'Segoe UI', system-ui, -apple-system, 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
+  font-family: 'DM Sans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei UI', sans-serif;
   font-size: 15px;
   line-height: 1.55;
-  background: var(--glass-deep);
+  background: transparent;
   color: var(--text-primary);
   overflow: hidden;
   height: 100vh;
@@ -742,6 +764,23 @@ input, textarea, select {
 .workflow-view .sidebar-panel.right-sidebar {
   width: 300px;
   min-width: 260px;
+}
+
+/* 收起时须覆盖上面的 min-width，否则两侧仍各占 ~260px 空白 */
+.workflow-view .sidebar-panel.left-sidebar.collapsed,
+.workflow-view .sidebar-panel.right-sidebar.collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0;
+  padding: 0;
+  margin: 0;
+  border: none;
+}
+
+.workflow-view.left-collapsed .workflow-canvas,
+.workflow-view.right-collapsed .workflow-canvas {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .panel-edge-toggle {
@@ -1587,9 +1626,8 @@ input, textarea, select {
   text-align: right;
 }
 
-/* Chat Input Area */
+/* Chat Input Area — 布局与附件条见 ChatView.vue .chat-composer */
 .chat-input-area {
-  padding: 16px 24px 20px;
   background: var(--bg-card);
   border-top: 1px solid var(--border-color);
 }
@@ -2283,7 +2321,7 @@ input, textarea, select {
 
 /* Workflow Canvas */
 .workflow-canvas {
-  flex: 1;
+  flex: 1 1 auto;
   position: relative;
   overflow: hidden;
   display: flex;
@@ -2291,6 +2329,7 @@ input, textarea, select {
   z-index: 1;
   min-width: 0;
   min-height: 0;
+  width: 100%;
 }
 
 .canvas-toolbar {

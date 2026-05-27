@@ -89,10 +89,10 @@ async function handleSave() {
 
 <template>
   <div class="settings-overlay" @click.self="emit('close')">
-    <div class="settings-modal" role="dialog" aria-labelledby="settings-title">
+    <div class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <header class="settings-header">
         <div>
-          <h2 id="settings-title">本地设置</h2>
+          <h2 id="settings-title">API 与模型设置</h2>
           <p class="settings-subtitle">按供应商分别保存模型与密钥，切换后互不影响</p>
         </div>
         <button type="button" class="icon-btn" aria-label="关闭" @click="emit('close')">
@@ -157,29 +157,36 @@ async function handleSave() {
 <style scoped>
 .settings-overlay {
   position: fixed;
-  inset: 0;
-  background: rgba(6, 10, 20, 0.6);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  z-index: 2000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  background: rgba(15, 23, 42, 0.28);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  z-index: 200000;
+  box-sizing: border-box;
 }
 
 .settings-modal {
-  width: 100%;
-  max-width: 520px;
-  max-height: 90vh;
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(520px, calc(100vw - 48px));
+  max-height: min(86vh, 720px);
   overflow-y: auto;
-  background: rgba(15, 23, 42, 0.82);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  border: 1px solid var(--glass-border);
-  border-radius: var(--glass-radius);
-  box-shadow: var(--glass-shadow);
-  padding: 20px 22px 18px;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: var(--glass-radius, 18px);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
+  padding: 22px 24px 20px;
+  color: var(--text-primary);
+  box-sizing: border-box;
 }
 
 .settings-header {
@@ -194,6 +201,7 @@ async function handleSave() {
   font-size: 18px;
   font-weight: 700;
   margin: 0;
+  color: var(--text-primary);
 }
 
 .settings-subtitle {
@@ -206,7 +214,7 @@ async function handleSave() {
   background: transparent;
   border: none;
   cursor: pointer;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   padding: 4px;
   flex-shrink: 0;
 }
@@ -222,8 +230,9 @@ async function handleSave() {
   flex-direction: column;
   gap: 12px;
   padding: 14px;
-  border: 1px solid var(--border-color);
-  background: var(--bg-tertiary);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: var(--glass-radius-sm, 14px);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .field {
@@ -234,13 +243,23 @@ async function handleSave() {
   color: var(--text-secondary);
 }
 
+.field span {
+  font-weight: 600;
+}
+
 .field input,
 .field select {
-  padding: 9px 11px;
-  border: 1px solid var(--border-color);
-  background: var(--bg-secondary);
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.18);
   font-size: 13px;
-  color: var(--text-primary);
+  color: var(--text-form);
+}
+
+.field select option {
+  background: #1a1a22;
+  color: #ffffff;
 }
 
 .field input:focus,
@@ -277,11 +296,12 @@ async function handleSave() {
   font-weight: 600;
   cursor: pointer;
   border: 1px solid var(--border-color);
+  border-radius: 12px;
 }
 
 .btn-primary {
   background: var(--gradient-primary);
-  color: #fff;
+  color: var(--text-on-accent);
   border: none;
 }
 
@@ -291,8 +311,9 @@ async function handleSave() {
 }
 
 .btn-secondary {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--text-primary);
+  border: 1px solid var(--glass-border-soft);
 }
 
 .settings-hint {
