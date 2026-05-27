@@ -12,6 +12,8 @@ logs/
 output/
 temp/
 data/settings.json
+scripts/mimo.local.env
+.mimo.local.env
 data/workspace/
 workspace/
 src/temp/

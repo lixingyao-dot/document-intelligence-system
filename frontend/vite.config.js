@@ -13,6 +13,7 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     __UI_SKIN__: JSON.stringify('electron-glass'),
+    __UI_BUILD_ID__: JSON.stringify(new Date().toISOString()),
   },
   server: {
     host: '127.0.0.1',

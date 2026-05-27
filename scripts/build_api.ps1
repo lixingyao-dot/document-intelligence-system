@@ -229,6 +229,7 @@ if (Test-Path (Join-Path $outDir "_internal\webview")) {
 if (-not (Test-ApiBundleIncludesFreshFrontend -AppRoot $AppRoot -ApiExePath $exe)) {
     throw "API bundle does not embed fresh glass frontend — check frontend/dist and rebuild."
 }
+Assert-BundledFrontendMatchesSource -AppRoot $AppRoot
 
 Write-Host ""
 Write-Host "API bundle ready (glass UI embedded):"

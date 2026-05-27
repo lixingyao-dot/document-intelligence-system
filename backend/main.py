@@ -37,6 +37,9 @@ FRONTEND_DIST = get_bundle_root() / "frontend" / "dist"
 if not FRONTEND_DIST.is_dir():
     FRONTEND_DIST = get_desktop_root() / "frontend" / "dist"
 
+_NO_STORE_HEADERS = {"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"}
+
+
 if FRONTEND_DIST.is_dir():
     assets_dir = FRONTEND_DIST / "assets"
     if assets_dir.is_dir():
@@ -44,7 +47,10 @@ if FRONTEND_DIST.is_dir():
 
     @app.get("/")
     async def desktop_index():
-        return FileResponse(FRONTEND_DIST / "index.html")
+        return FileResponse(
+            FRONTEND_DIST / "index.html",
+            headers=_NO_STORE_HEADERS,
+        )
 
     @app.get("/{full_path:path}")
     async def desktop_spa(full_path: str):
@@ -54,4 +60,7 @@ if FRONTEND_DIST.is_dir():
         file_path = FRONTEND_DIST / full_path
         if file_path.is_file():
             return FileResponse(file_path)
-        return FileResponse(FRONTEND_DIST / "index.html")
+        return FileResponse(
+            FRONTEND_DIST / "index.html",
+            headers=_NO_STORE_HEADERS,
+        )

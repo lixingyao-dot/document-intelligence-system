@@ -136,53 +136,6 @@ export const useWorkflowStore = defineStore('workflow', () => {
         { key: 'prompt', label: '自定义要求', type: 'textarea' }
       ]
     },
-    'schema-convert-format': {
-      icon: '', iconClass: 'ai',
-      title: '格式转换', subtitle: '转换节点',
-      fields: [
-        { key: '_hint_cf', type: 'static', text: '选择目标格式及转换选项；配置将保存在节点 config 供执行端解析。' },
-        { key: 'targetFormat', label: '目标格式', type: 'select',
-          options: [
-            { value: 'markdown', label: 'Markdown' },
-            { value: 'html', label: 'HTML' },
-            { value: 'plaintext', label: '纯文本' },
-            { value: 'pdf', label: 'PDF' },
-            { value: 'docx', label: 'Word (DOCX)' },
-            { value: 'json', label: 'JSON' }
-          ] },
-        { key: 'conversionOptions', label: '转换选项', type: 'select-multiple',
-          options: [
-            { value: 'keep_layout', label: '尽量保留版面' },
-            { value: 'extract_tables', label: '优先提取表格' },
-            { value: 'embed_images', label: '保留内嵌图片' },
-            { value: 'code_as_text', label: '代码块转纯文本' },
-            { value: 'sanitize_html', label: 'HTML 安全清洗' }
-          ] },
-        { key: 'preserveFormatting', label: '保留原格式标记', type: 'toggle' },
-        { key: 'preserveStructure', label: '保留文档结构', type: 'toggle' },
-        { key: 'prompt', label: '自定义转换规则', type: 'textarea' }
-      ]
-    },
-    'schema-split-document': {
-      icon: '', iconClass: 'ai',
-      title: '文档分割', subtitle: '分割节点',
-      fields: [
-        { key: 'splitMethod', label: '分割方式', type: 'select',
-          options: [{ value: 'section', label: '按章节' }, { value: 'paragraph', label: '按段落' }, { value: 'size', label: '按大小' }, { value: 'page', label: '按页数' }] },
-        { key: 'splitSize', label: '分割参数', type: 'input', placeholder: '如大小:字符数或页数' },
-        { key: 'preserveContext', label: '保留上下文', type: 'toggle' },
-        { key: 'prompt', label: '自定义分割规则', type: 'textarea' }
-      ]
-    },
-    'schema-keyword-highlight': {
-      icon: '', iconClass: 'ai',
-      title: '关键词高亮', subtitle: '增强节点',
-      fields: [
-        { key: 'topK', label: '关键词数量', type: 'input', placeholder: '默认 10' },
-        { key: 'marker', label: '高亮标记符', type: 'input', placeholder: '默认 **' },
-        { key: 'prompt', label: '自定义规则', type: 'textarea' }
-      ]
-    },
     'schema-sensitive-masking': {
       icon: '', iconClass: 'ai',
       title: '敏感信息脱敏', subtitle: '安全节点',
@@ -191,34 +144,12 @@ export const useWorkflowStore = defineStore('workflow', () => {
         { key: 'prompt', label: '自定义脱敏规则', type: 'textarea' }
       ]
     },
-    'schema-term-normalize': {
-      icon: '', iconClass: 'ai',
-      title: '术语统一替换', subtitle: '规范节点',
-      fields: [
-        { key: 'termDictionary', label: '术语词典', type: 'textarea', placeholder: '示例：A=>标准术语A; B=>标准术语B' },
-        { key: 'prompt', label: '自定义规则', type: 'textarea' }
-      ]
-    },
     'schema-outline-generate': {
       icon: '', iconClass: 'ai',
       title: '结构化提纲生成', subtitle: '分析节点',
       fields: [
         { key: 'maxDepth', label: '最大层级', type: 'input', placeholder: '默认 3' },
         { key: 'prompt', label: '自定义规则', type: 'textarea' }
-      ]
-    },
-    'schema-sentiment-enhanced': {
-      icon: '', iconClass: 'ai',
-      title: '情感倾向分析', subtitle: '分析节点',
-      fields: [
-        { key: 'prompt', label: '自定义分析规则', type: 'textarea' }
-      ]
-    },
-    'schema-timeline-extract': {
-      icon: '', iconClass: 'ai',
-      title: '时间线抽取', subtitle: '抽取节点',
-      fields: [
-        { key: 'prompt', label: '自定义抽取规则', type: 'textarea' }
       ]
     },
     'schema-save': {
@@ -273,97 +204,6 @@ export const useWorkflowStore = defineStore('workflow', () => {
         { key: 'prompt', label: '补充抽取规则', type: 'textarea', placeholder: '对模型或规则的额外说明' }
       ]
     },
-    'schema-data-process': {
-      icon: '', iconClass: 'ai',
-      title: '数据处理', subtitle: '表格类操作',
-      fields: [
-        { key: '_hint_dp', type: 'static', text: '针对表格数据：先选择处理类型，再填写对应参数（与《节点处理》数据处理章节一致）。' },
-        { key: 'processKind', label: '处理类型', type: 'select',
-          options: [
-            { value: 'sort', label: '排序' },
-            { value: 'filter', label: '筛选' },
-            { value: 'aggregate', label: '汇总' },
-            { value: 'dedupe', label: '去重' },
-            { value: 'fill_null', label: '填充空值' },
-            { value: 'computed_column', label: '新增计算列' },
-            { value: 'merge_columns', label: '合并列' },
-            { value: 'split_column', label: '拆分列' }
-          ] },
-        { key: 'sortColumn', label: '排序列（列名）', type: 'input', placeholder: '例如：金额 或 D', dependsOn: { field: 'processKind', value: 'sort' } },
-        { key: 'sortOrder', label: '升降序', type: 'select',
-          options: [{ value: 'asc', label: '升序' }, { value: 'desc', label: '降序' }],
-          dependsOn: { field: 'processKind', value: 'sort' } },
-        { key: 'filterExpr', label: '筛选条件', type: 'textarea', placeholder: '例：列「状态」= 已完成；或简短表达式说明', dependsOn: { field: 'processKind', value: 'filter' } },
-        { key: 'aggregateColumn', label: '汇总列', type: 'input', placeholder: '要汇总的列名', dependsOn: { field: 'processKind', value: 'aggregate' } },
-        { key: 'aggregateOp', label: '汇总方式', type: 'select',
-          options: [
-            { value: 'sum', label: '求和' },
-            { value: 'count', label: '计数' },
-            { value: 'avg', label: '平均值' },
-            { value: 'min', label: '最小' },
-            { value: 'max', label: '最大' }
-          ],
-          dependsOn: { field: 'processKind', value: 'aggregate' } },
-        { key: 'groupByColumns', label: '分组列（可选）', type: 'input', placeholder: '逗号分隔，留空表示全文一条汇总', dependsOn: { field: 'processKind', value: 'aggregate' } },
-        { key: 'dedupeColumns', label: '去重依据列', type: 'input', placeholder: '逗号分隔列名，留空表示整行去重', dependsOn: { field: 'processKind', value: 'dedupe' } },
-        { key: 'fillColumns', label: '填充列', type: 'input', placeholder: '要填充的列，逗号分隔', dependsOn: { field: 'processKind', value: 'fill_null' } },
-        { key: 'fillValue', label: '填充值', type: 'input', placeholder: '例如：0 或 N/A', dependsOn: { field: 'processKind', value: 'fill_null' } },
-        { key: 'computedFormula', label: '计算表达式', type: 'textarea', placeholder: '例：=[金额]*[数量] 或列运算说明', dependsOn: { field: 'processKind', value: 'computed_column' } },
-        { key: 'computedColumnName', label: '新列名', type: 'input', placeholder: '结果写入的列标题', dependsOn: { field: 'processKind', value: 'computed_column' } },
-        { key: 'mergeSourceColumns', label: '待合并列', type: 'input', placeholder: '逗号分隔', dependsOn: { field: 'processKind', value: 'merge_columns' } },
-        { key: 'mergeSeparator', label: '连接符', type: 'input', placeholder: '默认空格', dependsOn: { field: 'processKind', value: 'merge_columns' } },
-        { key: 'mergeTargetColumn', label: '目标列名', type: 'input', dependsOn: { field: 'processKind', value: 'merge_columns' } },
-        { key: 'splitSourceColumn', label: '待拆分列', type: 'input', dependsOn: { field: 'processKind', value: 'split_column' } },
-        { key: 'splitDelimiter', label: '分隔符', type: 'input', placeholder: '如：,、;、|', dependsOn: { field: 'processKind', value: 'split_column' } },
-        { key: 'splitIntoColumns', label: '拆成列名', type: 'input', placeholder: '逗号分隔多列标题', dependsOn: { field: 'processKind', value: 'split_column' } },
-        { key: 'prompt', label: '补充说明', type: 'textarea' }
-      ]
-    },
-    'schema-data-clean': {
-      icon: '', iconClass: 'ai',
-      title: '数据清洗', subtitle: '规则与规范化',
-      fields: [
-        { key: '_hint_dc', type: 'static', text: '可多选下方规则；实际清洗与预览在执行阶段由服务端/执行引擎应用（可先保存配置再联调）。' },
-        { key: 'cleanRules', label: '清洗规则', type: 'select-multiple',
-          options: [
-            { value: 'trim_spaces', label: '去除首尾空格' },
-            { value: 'normalize_date', label: '统一日期格式' },
-            { value: 'normalize_number', label: '统一数字格式' },
-            { value: 'handle_outliers', label: '处理异常值' },
-            { value: 'expand_merged_cells', label: '合并单元格展开' },
-            { value: 'fix_format_errors', label: '修正格式错误' }
-          ] },
-        { key: 'dateFormatPattern', label: '目标日期格式', type: 'input', placeholder: '例：YYYY-MM-DD（勾选「统一日期格式」后可填）',
-          dependsOn: { field: 'cleanRules', arrayIncludes: 'normalize_date' } },
-        { key: 'numberDecimalPlaces', label: '小数位数', type: 'input', placeholder: '可选，如：2',
-          dependsOn: { field: 'cleanRules', arrayIncludes: 'normalize_number' } },
-        { key: 'prompt', label: '补充规则说明', type: 'textarea' },
-      ]
-    },
-    'schema-table-extract': {
-      icon: '', iconClass: 'ai',
-      title: '表格提取', subtitle: '从文档中抽取表格',
-      fields: [
-        { key: 'tableStrategy', label: '提取策略', type: 'select',
-          options: [
-            { value: 'first', label: '第一个表格' },
-            { value: 'all', label: '全部表格' },
-            { value: 'by_index', label: '按序号' }
-          ] },
-        { key: 'tableIndex', label: '表格序号（从 1 开始）', type: 'input', placeholder: '当策略为「按序号」',
-          dependsOn: { field: 'tableStrategy', value: 'by_index' } },
-        { key: 'prompt', label: '补充说明', type: 'textarea' }
-      ]
-    },
-    'schema-data-rollup': {
-      icon: '', iconClass: 'ai',
-      title: '数据汇总', subtitle: '统计汇总',
-      fields: [
-        { key: 'rollupDims', label: '分类维度（列）', type: 'textarea', placeholder: '逗号或换行分隔' },
-        { key: 'rollupMetrics', label: '指标与聚合', type: 'textarea', placeholder: '例：销售额:sum; 数量:count' },
-        { key: 'prompt', label: '补充说明', type: 'textarea' }
-      ]
-    },
     'schema-save-excel': {
       icon: '', iconClass: 'output',
       title: '保存 Excel', subtitle: '输出节点',
@@ -414,26 +254,6 @@ export const useWorkflowStore = defineStore('workflow', () => {
           schema: null
         },
         {
-          icon: '', name: '数据处理', type: 'ai', title: '数据处理', body: '表格排序、筛选、汇总、去重与列变换',
-          schemaKey: 'schema-data-process',
-          schema: null
-        },
-        {
-          icon: '', name: '数据清洗', type: 'ai', title: '数据清洗', body: '去空格、格式统一与脏数据规范化',
-          schemaKey: 'schema-data-clean',
-          schema: null
-        },
-        {
-          icon: '', name: '表格提取', type: 'ai', title: '表格提取', body: '从 PDF/Word 等文档中提取表格结构',
-          schemaKey: 'schema-table-extract',
-          schema: null
-        },
-        {
-          icon: '', name: '数据汇总', type: 'ai', title: '数据汇总', body: '按维度统计汇总指标',
-          schemaKey: 'schema-data-rollup',
-          schema: null
-        },
-        {
           icon: '', name: '内容分析', type: 'ai', title: '内容分析', body: '关键词提取和实体识别',
           schemaKey: 'schema-analyze-content',
           schema: null
@@ -444,43 +264,13 @@ export const useWorkflowStore = defineStore('workflow', () => {
           schema: null
         },
         {
-          icon: '', name: '格式转换', type: 'ai', title: '格式转换', body: '在多种格式间智能转换',
-          schemaKey: 'schema-convert-format',
-          schema: null
-        },
-        {
-          icon: '', name: '文档分割', type: 'ai', title: '文档分割', body: '智能分割文档为多个部分',
-          schemaKey: 'schema-split-document',
-          schema: null
-        },
-        {
-          icon: '', name: '关键词高亮', type: 'ai', title: '关键词高亮', body: '提取关键词并在结果中标注高亮',
-          schemaKey: 'schema-keyword-highlight',
-          schema: null
-        },
-        {
           icon: '', name: '敏感信息脱敏', type: 'ai', title: '敏感信息脱敏', body: '手机号/身份证/邮箱等自动掩码',
           schemaKey: 'schema-sensitive-masking',
           schema: null
         },
         {
-          icon: '', name: '术语统一替换', type: 'ai', title: '术语统一替换', body: '按词典规范化术语表达',
-          schemaKey: 'schema-term-normalize',
-          schema: null
-        },
-        {
           icon: '', name: '结构化提纲生成', type: 'ai', title: '结构化提纲生成', body: '按层级输出目录提纲',
           schemaKey: 'schema-outline-generate',
-          schema: null
-        },
-        {
-          icon: '', name: '情感倾向分析', type: 'ai', title: '情感倾向分析', body: '输出打分、标签和依据',
-          schemaKey: 'schema-sentiment-enhanced',
-          schema: null
-        },
-        {
-          icon: '', name: '时间线抽取', type: 'ai', title: '时间线抽取', body: '提取事件并按时间排序',
-          schemaKey: 'schema-timeline-extract',
           schema: null
         }
       ]
@@ -1051,16 +841,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
   /** 新节点拖入画布时的默认配置，避免「处理类型」等依赖字段全空导致面板无内容 */
   function _defaultConfigForSchemaKey(schemaKey) {
     switch (schemaKey) {
-      case 'schema-data-process':
-        return { processKind: 'sort', sortOrder: 'asc' }
-      case 'schema-data-clean':
-        return { cleanRules: ['trim_spaces'] }
-      case 'schema-table-extract':
-        return { tableStrategy: 'first' }
       case 'schema-save-text':
         return { outputEncoding: 'utf-8', lineEnding: 'lf' }
-      case 'schema-convert-format':
-        return { targetFormat: 'markdown', conversionOptions: [] }
       case 'schema-translate':
         return {
           targetLanguage: 'zh',

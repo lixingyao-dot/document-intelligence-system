@@ -17,6 +17,8 @@ const draft = ref({ model: '', base_url: '', api_key: '' })
 const loading = ref(false)
 const saving = ref(false)
 const message = ref('')
+const uiBuildId = typeof __UI_BUILD_ID__ !== 'undefined' ? __UI_BUILD_ID__ : ''
+const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : ''
 
 const currentMeta = computed(() => providerMeta.value[activeProvider.value] || {})
 
@@ -141,6 +143,10 @@ async function handleSave() {
 
         <p v-if="message" class="settings-message" :class="{ error: message.includes('失败') }">
           {{ message }}
+        </p>
+
+        <p v-if="uiBuildId" class="settings-build-id">
+          界面 v{{ appVersion }} · 构建 {{ uiBuildId }}
         </p>
 
         <footer class="settings-footer">
@@ -280,6 +286,14 @@ async function handleSave() {
 
 .settings-message.error {
   color: var(--accent-danger, #c0392b);
+}
+
+.settings-build-id {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
 }
 
 .settings-footer {

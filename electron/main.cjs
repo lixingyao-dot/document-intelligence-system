@@ -937,7 +937,17 @@ function createWindow(url) {
     }
     mainWindow.show()
   })
-  mainWindow.loadURL(url)
+  const loadUi = () => {
+    mainWindow.loadURL(url)
+  }
+  if (app.isPackaged) {
+    mainWindow.webContents.session
+      .clearCache()
+      .then(loadUi)
+      .catch(loadUi)
+  } else {
+    loadUi()
+  }
 
   mainWindow.webContents.on('did-finish-load', () => {
     applyNativeGlassBackground(mainWindow)
@@ -966,13 +976,20 @@ function createWindow(url) {
 }
 
 async function boot() {
-  const envPort = parseInt(process.env.DESKTOP_API_PORT || '', 10)
-  if (Number.isFinite(envPort) && envPort > 0) {
-    apiPort = envPort
-  } else {
+  // 发行版固定走新起的 API，避免 DESKTOP_API_PORT / 8766 上残留的开发或旧版进程
+  if (app.isPackaged) {
     stopLocalStaleApis()
     await new Promise((r) => setTimeout(r, 800))
     apiPort = await pickApiPort()
+  } else {
+    const envPort = parseInt(process.env.DESKTOP_API_PORT || '', 10)
+    if (Number.isFinite(envPort) && envPort > 0) {
+      apiPort = envPort
+    } else {
+      stopLocalStaleApis()
+      await new Promise((r) => setTimeout(r, 800))
+      apiPort = await pickApiPort()
+    }
   }
 
   try {

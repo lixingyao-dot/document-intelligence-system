@@ -46,6 +46,10 @@ Stop-LocalDesktopProcesses -AppRoot $AppRoot
 Write-Host "==> Step 1/3: Build glass frontend (frontend/)"
 Set-Location "$AppRoot\frontend"
 if (-not (Test-Path "node_modules")) { npm install }
+$distDir = Join-Path $AppRoot "frontend\dist"
+if (Test-Path -LiteralPath $distDir) {
+    Remove-Item -LiteralPath $distDir -Recurse -Force -ErrorAction Stop
+}
 npm run build
 if (-not (Test-Path "dist\index.html")) {
     throw "Frontend build failed: missing frontend/dist/index.html"
@@ -71,6 +75,7 @@ Run full build: .\scripts\build.ps1
     if (-not (Test-ApiBundleIncludesFreshFrontend -AppRoot $AppRoot -ApiExePath $apiExe)) {
         throw "API bundle verification failed after build_api.ps1"
     }
+    Assert-BundledFrontendMatchesSource -AppRoot $AppRoot
 }
 
 if (Test-Path (Join-Path $apiDir "_internal\webview")) {

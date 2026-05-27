@@ -73,6 +73,37 @@ function Test-GlassFrontendDist {
     return ($css -match 'glass-deep') -and ($css -notmatch 'pixel-paper')
 }
 
+function Assert-BundledFrontendMatchesSource {
+    param([string]$AppRoot)
+
+    $srcDir = Join-Path $AppRoot "frontend\dist"
+    $bundledDir = Join-Path $AppRoot "dist-api\DocumentIntelligenceApi\_internal\frontend\dist"
+    if (-not (Test-Path -LiteralPath $bundledDir)) {
+        throw "Missing bundled frontend: $bundledDir"
+    }
+
+    $srcFiles = Get-ChildItem -LiteralPath $srcDir -Recurse -File -ErrorAction Stop
+    if (-not $srcFiles.Count) {
+        throw "frontend/dist is empty — run: cd frontend && npm run build"
+    }
+
+    foreach ($sf in $srcFiles) {
+        $rel = $sf.FullName.Substring($srcDir.Length).TrimStart('\', '/')
+        $bf = Join-Path $bundledDir $rel
+        if (-not (Test-Path -LiteralPath $bf)) {
+            throw "API bundle missing frontend file: $rel"
+        }
+        $sh = (Get-FileHash -LiteralPath $sf.FullName -Algorithm SHA256).Hash
+        $bh = (Get-FileHash -LiteralPath $bf -Algorithm SHA256).Hash
+        if ($sh -ne $bh) {
+            throw @"
+API bundle frontend mismatch: $rel
+Source and _internal/frontend/dist differ — delete dist-api and rerun build.ps1
+"@
+        }
+    }
+}
+
 function Test-ApiBundleIncludesFreshFrontend {
     param(
         [string]$AppRoot,
