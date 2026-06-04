@@ -4,9 +4,9 @@ Core module.
 """
 
 from .orchestrator import WorkflowCoordinator, TaskSpec, TaskType, TaskExecutor
-from .agents import BaseAgent, DocumentAgent, AgentB, AgentC, AgentD
+from .agents import BaseAgent, DocumentAgent, AgentB, AgentC
 
 __all__ = [
     'WorkflowCoordinator', 'TaskSpec', 'TaskType', 'TaskExecutor',
-    'BaseAgent', 'DocumentAgent', 'AgentB', 'AgentC', 'AgentD'
+    'BaseAgent', 'DocumentAgent', 'AgentB', 'AgentC'
 ]

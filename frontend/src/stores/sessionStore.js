@@ -157,6 +157,29 @@ function pickNewerIso(a, b) {
   return da.getTime() >= db.getTime() ? (a || b) : (b || a)
 }
 
+/** 聊天气泡：本地时区的 HH:mm（跨天则带日期） */
+function formatMessageTime(isoString) {
+  const date = parseApiTime(isoString)
+  if (!date) return ''
+  const now = new Date()
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+  const hh = String(date.getHours()).padStart(2, '0')
+  const mm = String(date.getMinutes()).padStart(2, '0')
+  if (sameDay) return `${hh}:${mm}`
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  if (date.getFullYear() === now.getFullYear()) return `${month}/${day} ${hh}:${mm}`
+  return `${date.getFullYear()}/${month}/${day} ${hh}:${mm}`
+}
+
+function normalizeMessageCreatedAt(isoString) {
+  const parsed = parseApiTime(isoString)
+  return parsed ? parsed.toISOString() : isoString || ''
+}
+
 function normalizeSessionItem(s) {
   const now = new Date().toISOString()
   if (!s) return { title: '新会话', created_at: now, updated_at: now }
@@ -183,6 +206,12 @@ function saveMessagesCache(sessionId, messages) {
 
 function loadMessagesCache(sessionId) {
   return readCache(MESSAGES_KEY + sessionId)
+}
+
+function hydrateCachedMessages(sessionId) {
+  const cached = loadMessagesCache(sessionId)
+  if (!cached?.messages?.length) return null
+  return cached.messages.map(normalizeMessageForResultDisplay)
 }
 
 function normalizeGeneratedFiles(rawFiles) {
@@ -376,6 +405,9 @@ async function loadJsonRowsFromArtifacts(sessionId, tableData, generatedFiles = 
 function normalizeMessageForResultDisplay(msg) {
   if (!msg || typeof msg !== 'object') return msg
   const normalized = { ...msg }
+  if (normalized.created_at != null) {
+    normalized.created_at = normalizeMessageCreatedAt(normalized.created_at)
+  }
   let metadata = normalized.metadata
   if (typeof metadata === 'string') {
     try {
@@ -494,6 +526,17 @@ export const useSessionStore = defineStore('session', () => {
     const idx = messages.value.findIndex((m) => m.id === loadingMsgId)
     if (idx > -1) messages.value.splice(idx, 1)
     loadingMsgId = null
+  }
+
+  /** 流式回复结束时标记助手消息时间（避免显示首 token 时刻） */
+  function stampLatestAssistantMessageTime() {
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const msg = messages.value[i]
+      if (msg?.role === 'assistant' && !msg.isLoading) {
+        msg.created_at = new Date().toISOString()
+        return
+      }
+    }
   }
 
   // 模式相关
@@ -810,9 +853,9 @@ export const useSessionStore = defineStore('session', () => {
     await new Promise(resolve => setTimeout(resolve, 100))
     connectWebSocket()
 
-    const cachedMsgs = loadMessagesCache(sessionId)
-    if (cachedMsgs && cachedMsgs.messages?.length > 0) {
-      messages.value = cachedMsgs.messages
+    const cachedMsgs = hydrateCachedMessages(sessionId)
+    if (cachedMsgs?.length > 0) {
+      messages.value = cachedMsgs
     } else {
       loadMessages(sessionId).catch(console.error)
     }
@@ -844,9 +887,9 @@ export const useSessionStore = defineStore('session', () => {
           wsPrev.close()
         }
         connectWebSocket()
-        const cachedMsgs = loadMessagesCache(nextSession.session_id)
-        if (cachedMsgs?.messages?.length > 0) {
-          messages.value = cachedMsgs.messages
+        const cachedMsgs = hydrateCachedMessages(nextSession.session_id)
+        if (cachedMsgs?.length > 0) {
+          messages.value = cachedMsgs
         } else {
           loadMessages(nextSession.session_id).catch(console.error)
         }
@@ -1147,6 +1190,7 @@ export const useSessionStore = defineStore('session', () => {
       } else if (data.type === 'done') {
         console.log('[WebSocket onmessage] type=done, pendingResolve:', !!pendingResolve, 'generated_files:', data.generated_files)
         removeAssistantLoadingBubble()
+        stampLatestAssistantMessageTime()
         isStreaming.value = false
         isSending = false
         showProgressBar.value = false
@@ -2015,9 +2059,9 @@ export const useSessionStore = defineStore('session', () => {
       currentSessionId.value = cached.currentSessionId
       const sess = cached.sessions?.find(s => s.session_id === cached.currentSessionId)
       currentMode.value = sess?.current_mode || 'default_conversation'
-      const cachedMsgs = loadMessagesCache(cached.currentSessionId)
-      if (cachedMsgs?.messages) {
-        messages.value = cachedMsgs.messages
+      const cachedMsgs = hydrateCachedMessages(cached.currentSessionId)
+      if (cachedMsgs?.length) {
+        messages.value = cachedMsgs
       }
     } else {
       currentMode.value = 'default_conversation'
@@ -2090,6 +2134,7 @@ export const useSessionStore = defineStore('session', () => {
     toggleSidebar,
     sidebarCollapsed,
     formatTime,
+    formatMessageTime,
     parseApiTime,
     loadFiles,
   }

@@ -253,66 +253,9 @@ class WorkflowCoordinator:
                     generated.append(filled_template)
                 extracted_data.metadata["generated_file_paths"] = generated
 
-        # 4. 可选入库（仅在显式开启 store_to_db 且数据库启用时执行）
-        db_message = ""
-        should_store_to_db = bool(task_spec.parameters.get("store_to_db")) and bool(self.config.database.enabled)
-        if should_store_to_db:
-            payload_fields = payload.get("schema", {}).get("fields", []) if isinstance(payload, dict) else []
-            payload_entities = payload.get("entities", []) if isinstance(payload, dict) else []
-            if not isinstance(payload_fields, list):
-                payload_fields = []
-            if not payload_fields and isinstance(payload_entities, list) and payload_entities and isinstance(payload_entities[0], dict):
-                payload_fields = list(payload_entities[0].keys())
-            db_payload = {
-                "fields": payload_fields,
-                "entities": payload_entities if isinstance(payload_entities, list) else [],
-                "schema_version": "1.0.0",
-            }
-            if task_spec.parameters.get("task_id"):
-                db_payload["task_id"] = str(task_spec.parameters.get("task_id"))
-
-            db_task_spec = TaskSpec(
-                task_type=task_spec.task_type,
-                instruction=task_spec.instruction,
-                source_files=task_spec.source_files,
-                template_file=task_spec.template_file,
-                output_file=task_spec.output_file,
-                parameters={"data": db_payload},
-                conversation_history=task_spec.conversation_history,
-                session_id=task_spec.session_id,
-            )
-            db_result = self.executor.execute_agent(agent_name="agent_c", task_spec=db_task_spec)
-            if getattr(db_result, "success", False):
-                db_message = "，并已写入数据库"
-                db_data = getattr(db_result, "data", {})
-                db_info = {
-                    "success": True,
-                    "task_uuid": db_data.get("task_uuid") if isinstance(db_data, dict) else None,
-                    "extraction_id": db_data.get("extraction_id") if isinstance(db_data, dict) else None,
-                    "result_version": db_data.get("result_version") if isinstance(db_data, dict) else None,
-                }
-                extracted_data.metadata = extracted_data.metadata or {}
-                extracted_data.metadata["db_result"] = db_info
-                if isinstance(getattr(extracted_data, "data", None), dict):
-                    extracted_data.data["db_result"] = db_info
-            else:
-                self.logger.warning(f"实体提取入库失败: {getattr(db_result, 'message', '')}")
-                db_message = "（数据库写入失败，已保留本地输出）"
-                db_meta = getattr(db_result, "metadata", None)
-                db_error_code = db_meta.get("error_code") if isinstance(db_meta, dict) else None
-                fail_info = {
-                    "success": False,
-                    "error_code": db_error_code,
-                    "message": getattr(db_result, "message", "数据库写入失败"),
-                }
-                extracted_data.metadata = extracted_data.metadata or {}
-                extracted_data.metadata["db_result"] = fail_info
-                if isinstance(getattr(extracted_data, "data", None), dict):
-                    extracted_data.data["db_result"] = fail_info
-
         return WorkflowResult(
             success=True,
-            message=f"实体提取完成{db_message}",
+            message="实体提取完成",
             data=extracted_data,
             output_file=filled_template or saved_json_path or saved_xlsx_path or task_spec.output_file,
         )
@@ -368,14 +311,14 @@ class WorkflowCoordinator:
     def _table_filling_flow(self, task_spec: TaskSpec, progress_callback=None) -> WorkflowResult:
         """
         表格填表模式
-        1. Agent_D 筛选Excel数据
+        1. Agent_C 筛选Excel数据
         2. 填入表格模板
         """
         self.logger.info("进入表格填表模式")
 
-        # Agent_D 处理表格
+        # Agent_C 处理表格
         result = self.executor.execute_agent(
-            agent_name="agent_d",
+            agent_name="agent_c",
             task_spec=task_spec,
             progress_callback=progress_callback,
         )

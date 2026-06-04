@@ -73,7 +73,7 @@ class TaskExecutor:
     ) -> Any:
         """
         执行Agent
-        agent_name: agent_a, agent_b, agent_c, agent_d, conversation
+        agent_name: agent_a, agent_b, agent_c, conversation
         """
         agent = self._get_agent(agent_name)
         if not agent:
@@ -105,9 +105,9 @@ class TaskExecutor:
             return ""
 
         try:
-            from core.agents.agent_d import run_agent_d_fill_from_entities
+            from core.agents.agent_c import run_agent_c_fill_from_entities
 
-            fill_result = run_agent_d_fill_from_entities(
+            fill_result = run_agent_c_fill_from_entities(
                 entities=entities,
                 template=template.path,
             )
@@ -435,7 +435,6 @@ class TaskExecutor:
             "agent_a": "core.agents.agent_a.AgentA",
             "agent_b": "core.agents.agent_b.AgentB",
             "agent_c": "core.agents.agent_c.AgentC",
-            "agent_d": "core.agents.agent_d.AgentD",
             "conversation": "core.agents.conversation_agent.ConversationAgent",
             "document_understanding": "core.agents.document_understand_agent.DocumentAgent",
         }

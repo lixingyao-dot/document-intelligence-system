@@ -26,7 +26,7 @@ CHECKS = [
     "api.main",
     "core.orchestrator.coordinator",
     "core.agents.agent_b",
-    "core.agents.agent_d",
+    "core.agents.agent_c",
     "service.agent_service",
     "starter_workflows",
     "workflow_storage",

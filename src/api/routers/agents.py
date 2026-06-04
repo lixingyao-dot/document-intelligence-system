@@ -108,7 +108,7 @@ async def mixed_fill(request: MixedFillRequest, authorization: str | None = Head
     import shutil
     from pathlib import Path
 
-    from core.agents.agent_d import run_agent_d_fill_from_entities
+    from core.agents.agent_c import run_agent_c_fill_from_entities
 
     cfg = load_config()
     current_user = None
@@ -190,7 +190,7 @@ async def mixed_fill(request: MixedFillRequest, authorization: str | None = Head
     output_template_path = str(uploads_dir / f"{Path(effective_template).stem}_filled{Path(effective_template).suffix}")
     output_json_path = str(uploads_dir / f"{Path(effective_template).stem}_merged_rows.json")
 
-    result = run_agent_d_fill_from_entities(
+    result = run_agent_c_fill_from_entities(
         entities=request.entities,
         template=effective_template,
         output_json=output_json_path,

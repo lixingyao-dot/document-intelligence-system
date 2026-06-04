@@ -24,7 +24,7 @@
 |----------|-------------|
 | **文档智能操作**（自然语言编辑、格式调整、内容提取） | **智能对话**：文档理解、文档编辑（Agent A）；工作流中的摘要、润色、格式转换等 AI 节点 |
 | **非结构化信息抽取** | **实体提取**（Agent B）：从 docx/pdf/txt/md 等抽取 JSON，可配合 Excel 模板 |
-| **表格数据填写** | **表格填表**（Agent D）：数据源 Excel + Word/Excel 模板；支持「模板优先」填表与混合模式 |
+| **表格数据填写** | **表格填表**（Agent C）：数据源 Excel + Word/Excel 模板；支持「模板优先」填表与混合模式 |
 | **多源数据融合与输出** | **文档库**管理多份源文件；**工作流**串联输入 → AI 处理 → 输出（PDF/MD/入库）；对话与工作流结果支持**另存为**到本地 |
 | **桌面部署** | Electron 安装包（`Setup.exe`）或 `win-unpacked` 免安装目录；设置页配置多厂商 LLM Key |
 
@@ -34,9 +34,9 @@
 |--------|------|------------------|
 | **Agent A** | 文档理解、按自然语言编辑文档 | docx、txt、md、xlsx 等 |
 | **Agent B** | 非结构化文档实体/字段抽取 → JSON | docx、pdf、txt、md |
-| **Agent D** | Excel 筛选 + 填入 Word/Excel 模板 | xlsx 数据源 + xlsx/docx 模板 |
+| **Agent C** | Excel 筛选 + 填入 Word/Excel 模板 | xlsx 数据源 + xlsx/docx 模板 |
 
-桌面版由 **A / B / D 三类智能体**协作；会话、文档库、工作流与配置均使用**本地 JSON + 文件**，无需数据库即可完整使用。
+桌面版由 **A / B / C 三类智能体**协作；会话、文档库、工作流与配置均使用**本地 JSON + 文件**，无需数据库即可完整使用。
 
 ---
 
@@ -49,17 +49,6 @@
 - **结果保存**：生成文件通过系统**另存为**对话框保存（不强制写入固定目录、不自动塞入文档库）。
 
 手工测试样例见：[test-fixtures/templates/README.md](test-fixtures/templates/README.md)。
-
-### 生成项目展示 PPT（含实测截图）
-
-将界面截图放入 `output/presentation_assets/`（`img01.png` … `img14.png`），然后执行：
-
-```powershell
-cd desktop-electron
-python scripts\build_presentation_with_screenshots.py
-```
-
-产物：`output/文档智能系统_项目展示_v2.pptx`（9 页：含三类智能体专页，无数据库/Agent C）。
 
 ---
 

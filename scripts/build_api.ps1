@@ -159,7 +159,6 @@ $hiddenImports = @(
     "core.agents.agent_a.agent_a",
     "core.agents.agent_b",
     "core.agents.agent_c",
-    "core.agents.agent_d",
     "core.agents.conversation_agent",
     "core.agents.document_understand_agent",
     "uvicorn.logging",

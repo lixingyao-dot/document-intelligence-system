@@ -134,7 +134,6 @@ class SessionManager:
             "agent_a": "core.agents.agent_a.AgentA",
             "agent_b": "core.agents.agent_b.AgentB",
             "agent_c": "core.agents.agent_c.AgentC",
-            "agent_d": "core.agents.agent_d.AgentD",
         }
         
         agent_config = agent_map.get(agent_type)

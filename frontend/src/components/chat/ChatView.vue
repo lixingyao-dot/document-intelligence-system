@@ -97,13 +97,6 @@ onUnmounted(() => {
   sessionStore.disconnectWebSocket()
 })
 
-function formatTime(isoString) {
-  if (!isoString) return ''
-  const dt = new Date(isoString)
-  if (Number.isNaN(dt.getTime())) return ''
-  return dt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-}
-
 function renderMarkdown(content) {
   if (content == null || content === '') return ''
   return marked.parse(String(content))
@@ -537,6 +530,12 @@ function userMessageAttachments(msg) {
             <Info v-else :size="20" :stroke-width="2" />
           </div>
           <div class="message-content">
+            <div
+              v-if="!msg.isLoading && msg.created_at"
+              class="message-time"
+            >
+              {{ sessionStore.formatMessageTime(msg.created_at) }}
+            </div>
             <!-- 用户消息：带附件时显示文件卡片 -->
             <template v-if="msg.role === 'user' && userMessageAttachments(msg).length > 0">
               <div class="user-attachments">
@@ -813,7 +812,6 @@ function userMessageAttachments(msg) {
                 </div>
               </div>
             </div>
-            <div class="message-time">{{ formatTime(msg.created_at) }}</div>
           </div>
         </div>
 

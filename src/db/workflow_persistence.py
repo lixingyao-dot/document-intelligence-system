@@ -139,5 +139,5 @@ def persist_workflow_execute_end(
                 and row.status == "running"
                 and tt in ("default_conversation", "document_editing")
             ):
-                # 无后续 AgentC 的典型闭环：直接标成功
+                # 典型闭环：直接标成功
                 mark_task_succeeded(conn, tu, task_id)

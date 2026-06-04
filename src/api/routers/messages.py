@@ -23,7 +23,7 @@ from db.session_repository import (
     add_session_file,
     get_session_files,
 )
-from core.agents.agent_d import run_agent_d_api
+from core.agents.agent_c import run_agent_c_api
 from service.agent_service import AgentService, get_selected_session_files_payload
 from utils.chat_mode import normalize_chat_mode
 from utils.datetime_util import utc_iso
@@ -277,7 +277,7 @@ def _ensure_files_in_db(files: List[Dict[str, Any]], session_id: str, cfg, user_
 
 
 def _flatten_table_filling_response(response: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert run_agent_d_api result into the legacy frontend-friendly shape."""
+    """Convert run_agent_c_api result into the legacy frontend-friendly shape."""
 
     def _to_dict(obj: Any) -> Dict[str, Any]:
         if isinstance(obj, dict):
@@ -345,7 +345,7 @@ def _flatten_table_filling_response(response: Dict[str, Any]) -> Dict[str, Any]:
             except Exception:
                 template_output = None
 
-    # output_json 兜底：按 AgentD 默认命名规则回推
+    # output_json 兜底：按 AgentC 默认命名规则回推
     if not output_json:
         src_path = data.get("excel_path") or resolved_input.get("src")
         if src_path:
@@ -969,7 +969,7 @@ async def send_message(session_id: str, request: SendMessageRequest, authorizati
                 if isinstance(raw_targets, list):
                     request_table_targets = raw_targets
             print(f"[API] 进入 table_filling 直达路径 session_id={session_id} source={source_file.get('file_name')} template={template_file.get('file_name')}")
-            response = run_agent_d_api(
+            response = run_agent_c_api(
                 src=_resolve_file_reference(source_file, cfg, session_id, "source"),
                 prompt=request.content,
                 template=_resolve_file_reference(template_file, cfg, session_id, "template"),
@@ -1255,9 +1255,9 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                     add_message(session_id, "user", user_content, user_meta, config=cfg, user_id=current_user.id if current_user else None)
                     print(f"[WS] 发送 table_filling start type=start mode={mode}")
                     await manager.send_json(session_id, {"type": "start", "mode": mode})
-                    print(f"[WS] 调用 run_agent_d_api...")
+                    print(f"[WS] 调用 run_agent_c_api...")
                     response = await asyncio.to_thread(
-                        run_agent_d_api,
+                        run_agent_c_api,
                         src=_resolve_file_reference(source_file, cfg, session_id, "source"),
                         prompt=user_content,
                         template=_resolve_file_reference(template_file, cfg, session_id, "template"),
@@ -1266,16 +1266,16 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                         allow_rule_fallback=True,
                         table_targets=client_table_targets if isinstance(client_table_targets, list) else None,
                     )
-                    print(f"[API] WS run_agent_d_api 完成, 响应长度={len(str(response))}")
+                    print(f"[API] WS run_agent_c_api 完成, 响应长度={len(str(response))}")
                     if isinstance(response, dict):
                         data_obj = response.get("data") if isinstance(response.get("data"), dict) else {}
                         resolved_obj = response.get("resolved_input") if isinstance(response.get("resolved_input"), dict) else {}
                         print(
-                            f"[API] WS run_agent_d_api 摘要: success={response.get('success')} "
+                            f"[API] WS run_agent_c_api 摘要: success={response.get('success')} "
                             f"status={data_obj.get('status')} reason={data_obj.get('reason')}"
                         )
                         print(
-                            f"[API] WS run_agent_d_api 原始字段: "
+                            f"[API] WS run_agent_c_api 原始字段: "
                             f"data.output_json={data_obj.get('output_json')} "
                             f"data.template_output={data_obj.get('template_output')} "
                             f"resolved.output_json={resolved_obj.get('output_json')} "
