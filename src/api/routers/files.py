@@ -20,7 +20,7 @@ from core.storage import (
     upload_stream_to_storage,
     oss_storage_enabled,
 )
-from db.auth_repository import resolve_user_from_authorization
+from db.auth_context import resolve_user_from_authorization
 from db.session_repository import (
     add_session_file,
     delete_session_file,

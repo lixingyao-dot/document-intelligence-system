@@ -31,8 +31,7 @@ from pydantic import BaseModel, Field
 from config import SystemConfig, get_config
 from core.orchestrator.coordinator import WorkflowCoordinator
 from core.orchestrator.task_spec import FileInfo, FileType, TaskSpec, TaskType
-from core.storage import build_blob_name, upload_file_to_storage, oss_storage_enabled
-from db.auth_repository import resolve_user_from_authorization
+from db.auth_context import resolve_user_from_authorization
 from db.connection import is_database_configured
 from db.workflow_repository import db_load_execution_states, db_save_execution_states, is_db_enabled
 from db.session_repository import add_session_file, get_session_by_id
@@ -46,9 +45,7 @@ logger = get_logger(__name__)
 
 
 def _library_storage_ready(config: SystemConfig) -> bool:
-    if get_desktop_local_library() is not None:
-        return True
-    return config.database.enabled and is_database_configured(config)
+    return get_desktop_local_library() is not None
 
 
 # ==================== 执行状态存储（进程内内存） ====================
@@ -337,18 +334,6 @@ def _resolve_doc_path(doc_id: str, config: SystemConfig) -> Optional[str]:
             path = lib.resolve_doc_path(space_id, doc_id)
             if path:
                 return str(path)
-    elif config.database.enabled and is_database_configured(config):
-        try:
-            from db.library_repository import get_library_doc_by_id
-
-            doc = get_library_doc_by_id(doc_id, config=config, user_id=None)
-            if doc and doc.storage_key:
-                p = Path(doc.storage_key)
-                if p.exists():
-                    return str(p)
-        except Exception as exc:
-            logger.debug("文档库 ID 解析跳过 %s: %s", doc_id, exc)
-
     # session 文件
     parts = doc_id.split(":", 1)
     if len(parts) == 2 and parts[0] == "session":
@@ -689,59 +674,7 @@ def _save_output_to_library(file_path: str, space_id: str, config: SystemConfig)
             logger.warning(f"保存到本地文档库失败: {e}")
             return False, str(e)
 
-    if not (config.database.enabled and is_database_configured(config)):
-        return False, "数据库未启用或未配置，无法写入 library_documents"
-
-    try:
-        from db.library_repository import add_library_doc, get_library_space_by_id
-        import hashlib
-
-        p = Path(file_path)
-        if not p.is_file():
-            return False, f"输出文件不存在: {file_path}"
-
-        # 与手动上传一致：登记为空间所属用户，否则已登录用户列表会带 user_id 条件，看不到 user_id 为空的记录
-        space_row = get_library_space_by_id(space_id, config=config, user_id=None)
-        owner_user_id = space_row.user_id if space_row else None
-
-        with open(p, "rb") as f:
-            content_bytes = f.read()
-        file_size = len(content_bytes)
-        file_hash = hashlib.md5(content_bytes).hexdigest()
-        safe_name = f"{file_hash}_{p.name}"
-
-        storage_key: Optional[str] = None
-        if oss_storage_enabled(config):
-            from core.storage import build_blob_name, upload_stream_to_storage
-            from io import BytesIO
-
-            blob_name = build_blob_name(space_id, safe_name, prefix=config.storage.object_key_prefix or "workflows")
-            storage_key = upload_stream_to_storage(
-                BytesIO(content_bytes),
-                config=config,
-                blob_name=blob_name,
-                content_type="application/octet-stream",
-            )
-        else:
-            upload_dir = Path(config.work_dir) / "library" / space_id
-            upload_dir.mkdir(parents=True, exist_ok=True)
-            storage_key = str(upload_dir / safe_name)
-            Path(storage_key).write_bytes(content_bytes)
-
-        add_library_doc(
-            space_id=space_id,
-            file_name=p.name,
-            file_size=file_size,
-            config=config,
-            user_id=owner_user_id,
-            mime_type="application/octet-stream",
-            storage_key=storage_key,
-            blob_url=storage_key,
-        )
-        return True, ""
-    except Exception as e:
-        logger.warning(f"保存到文档库失败: {e}")
-        return False, str(e)
+    return False, "本地文档库未初始化，无法保存输出"
 
 
 # ==================== API 端点 ====================

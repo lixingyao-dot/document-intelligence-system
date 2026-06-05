@@ -1,7 +1,7 @@
 """
-桌面版启动器：内嵌窗口 + 本进程 API（双击 exe 即完整应用，不打开系统浏览器）。
+桌面版启动器：本进程 API（Electron 由 server_entry 以 headless 调用）。
 
-Electron 版由 server_entry.py 调用本模块；打包 API 时须包含 launcher（见 build_api.ps1）。
+打包 API 时须包含 launcher（见 build_api.ps1）。
 """
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
-from typing import Optional
 
 if getattr(sys, "frozen", False):
     _meipass = getattr(sys, "_MEIPASS", "")
@@ -27,28 +26,7 @@ from backend.paths import ensure_sys_path, get_desktop_root  # noqa: E402
 
 ensure_sys_path()
 
-
-def _is_electron_host() -> bool:
-    return os.environ.get("DOC_INTEL_ELECTRON") == "1"
-
-
-# 打包桌面 exe 时让 PyInstaller 分析到 pywebview（Electron API 包会排除该模块）
-if getattr(sys, "frozen", False) and not _is_electron_host():
-    try:
-        import webview  # noqa: F401
-        import webview.platforms.edgechromium  # noqa: F401
-    except Exception:
-        pass
-
 _server_holder: dict = {"server": None}
-
-
-def _is_frozen() -> bool:
-    return bool(getattr(sys, "frozen", False))
-
-
-def _wants_headless(args: argparse.Namespace) -> bool:
-    return bool(args.headless or _is_electron_host())
 
 
 def _pick_port(preferred: int = 8765) -> int:
@@ -114,62 +92,17 @@ def _show_fatal_message(title: str, message: str) -> None:
     print(f"{title}: {message}", file=sys.stderr)
 
 
-def _open_native_window(url: str) -> int:
-    try:
-        import webview  # noqa: F401
-    except Exception as exc:
-        detail = f"{type(exc).__name__}: {exc}"
-        hint = (
-            "当前为 Electron 专用 API 包（不含 pywebview）。\n"
-            "请重新运行 desktop-electron\\scripts\\build_api.ps1 或 build.ps1 后，再启动 Electron 安装包。"
-            if os.environ.get("DOC_INTEL_ELECTRON") == "1"
-            else "请重新运行 scripts\\build_exe.ps1 打包；并确认已安装 WebView2 运行时。"
-        )
-        _show_fatal_message(
-            "文档智能系统",
-            f"无法加载内嵌窗口组件（pywebview）。\n{detail}\n\n{hint}",
-        )
-        return 1
-
-    def on_closing() -> None:
-        _stop_api_server()
-
-    window = webview.create_window(
-        "文档智能系统",
-        url,
-        width=1280,
-        height=800,
-        min_size=(900, 600),
-    )
-    window.events.closing += on_closing
-
-    gui: Optional[str] = "edgechromium" if sys.platform == "win32" else None
-    try:
-        webview.start(gui=gui)
-    except Exception as exc:
-        if gui == "edgechromium":
-            webview.start()
-        else:
-            _show_fatal_message(
-                "文档智能系统",
-                f"无法启动内嵌窗口：{type(exc).__name__}: {exc}\n\n请安装 Microsoft WebView2 运行时后重试。",
-            )
-            return 1
-    _stop_api_server()
-    return 0
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="文档智能系统 · 桌面本地版")
     parser.add_argument(
         "--external-browser",
         action="store_true",
-        help="开发调试用：用系统浏览器打开（打包 exe 时忽略）",
+        help="开发调试用：用系统浏览器打开",
     )
     parser.add_argument(
         "--headless",
         action="store_true",
-        help="仅启动 API，不打开窗口（Electron / server_entry 打包 API 使用）",
+        help="仅启动 API（Electron / server_entry 默认行为）",
     )
     parser.add_argument("--port", type=int, default=0, help="0 表示自动选择端口")
     args = parser.parse_args()
@@ -178,7 +111,13 @@ def main() -> int:
     port = _resolve_port(args)
     os.environ["DESKTOP_API_PORT"] = str(port)
 
-    if _is_frozen() and _wants_headless(args):
+    headless = bool(
+        args.headless
+        or os.environ.get("DOC_INTEL_ELECTRON") == "1"
+        or getattr(sys, "frozen", False)
+    )
+
+    if headless:
         _run_api_server(host, port)
         return 0
 
@@ -186,46 +125,26 @@ def main() -> int:
     thread.start()
 
     if not _wait_health(port):
-        timeout_hint = (
-            "本地 API 启动超时。\n请重新运行 desktop-electron\\scripts\\build.ps1，"
-            "或开发模式执行 desktop-electron\\scripts\\run_dev.ps1。"
-            if _is_electron_host()
-            else "服务启动超时。\n若刚更新代码，请重新运行 scripts\\build_exe.ps1。"
+        _show_fatal_message(
+            "文档智能系统",
+            "本地 API 启动超时。\n请运行 desktop-electron\\scripts\\run_dev.ps1 或 build.ps1。",
         )
-        _show_fatal_message("文档智能系统", timeout_hint)
         return 1
 
     url = f"http://{host}:{port}/"
     data_dir = get_desktop_root() / "data"
-    headless = _wants_headless(args)
-
-    def _run_headless() -> int:
-        try:
-            while thread.is_alive():
-                time.sleep(1)
-        except KeyboardInterrupt:
-            _stop_api_server()
-        return 0
-
-    if headless:
-        return _run_headless()
-
-    if _is_frozen():
-        return _open_native_window(url)
-
     print(f"桌面版已启动: {url}")
     print(f"数据目录: {data_dir}")
 
     if args.external_browser:
         webbrowser.open(url)
-        try:
-            while thread.is_alive():
-                time.sleep(1)
-        except KeyboardInterrupt:
-            _stop_api_server()
-        return 0
 
-    return _open_native_window(url)
+    try:
+        while thread.is_alive():
+            time.sleep(1)
+    except KeyboardInterrupt:
+        _stop_api_server()
+    return 0
 
 
 if __name__ == "__main__":

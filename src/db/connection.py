@@ -1,22 +1,17 @@
 """
-PostgreSQL / Supabase 连接与连接池
+PostgreSQL / Supabase 连接与连接池（桌面版不启用；需可选安装 psycopg）。
 
 使用方式：
   from db.connection import get_pool, db_connection, health_check, build_conninfo
-
-需在 .env 中设置 DB_ENABLED=true，并提供 DATABASE_URL（推荐）或 DB_HOST 等分段变量。
 """
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Generator, Optional, Tuple
-
-import psycopg
-from psycopg_pool import ConnectionPool
+from typing import Any, Generator, Optional, Tuple
 
 from config import DatabaseConfig, SystemConfig, get_config
 
-_pool: Optional[ConnectionPool] = None
+_pool: Optional[Any] = None
 
 
 def _append_sslmode_to_url(url: str, sslmode: str) -> str:
@@ -30,14 +25,12 @@ def _append_sslmode_to_url(url: str, sslmode: str) -> str:
 
 
 def build_conninfo(config: Optional[SystemConfig] = None) -> str:
-    """
-    生成 psycopg 可用的连接串（conninfo）。
-    优先使用 config.database.url（Supabase 控制台提供的 URI）。
-    """
+    """生成 psycopg 可用的连接串（conninfo）。"""
     cfg = (config or get_config()).database
     if cfg.url:
         return _append_sslmode_to_url(cfg.url, cfg.sslmode)
-    # 分段配置：使用 libpq 关键字，避免手动拼接密码中的特殊字符
+    import psycopg
+
     kwargs = {
         "host": cfg.host,
         "port": cfg.port,
@@ -51,7 +44,6 @@ def build_conninfo(config: Optional[SystemConfig] = None) -> str:
 
 
 def is_database_configured(config: Optional[SystemConfig] = None) -> bool:
-    """数据库已启用且具备最小连接信息。"""
     cfg = (config or get_config()).database
     if not cfg.enabled:
         return False
@@ -60,8 +52,8 @@ def is_database_configured(config: Optional[SystemConfig] = None) -> bool:
     return bool(cfg.host and cfg.database and cfg.username)
 
 
-def get_pool(config: Optional[SystemConfig] = None) -> ConnectionPool:
-    """懒加载全局连接池（需在 DB_ENABLED=true 时调用）。"""
+def get_pool(config: Optional[SystemConfig] = None):
+    """懒加载全局连接池（需在 DB_ENABLED=true 且已安装 psycopg 时调用）。"""
     global _pool
     from utils.desktop_runtime import is_desktop_app
 
@@ -76,6 +68,8 @@ def get_pool(config: Optional[SystemConfig] = None) -> ConnectionPool:
             "，或设置 DB_HOST、DB_NAME、DB_USER、DB_PASSWORD"
         )
     if _pool is None:
+        from psycopg_pool import ConnectionPool
+
         conninfo = build_conninfo(config)
         _pool = ConnectionPool(
             conninfo=conninfo,
@@ -86,7 +80,6 @@ def get_pool(config: Optional[SystemConfig] = None) -> ConnectionPool:
 
 
 def reset_pool() -> None:
-    """关闭连接池（测试或重载配置时使用）。"""
     global _pool
     if _pool is not None:
         _pool.close()
@@ -95,17 +88,12 @@ def reset_pool() -> None:
 
 @contextmanager
 def db_connection(config: Optional[SystemConfig] = None) -> Generator:
-    """从连接池获取一条连接的上下文管理器。"""
     pool = get_pool(config)
     with pool.connection() as conn:
         yield conn
 
 
 def health_check(config: Optional[SystemConfig] = None) -> Tuple[bool, str]:
-    """
-    检查数据库是否可达。
-    返回 (成功, 说明)；未启用时返回 (False, 原因)。
-    """
     cfg = (config or get_config()).database
     if not cfg.enabled:
         return False, "数据库未启用（DB_ENABLED!=true）"
@@ -116,5 +104,7 @@ def health_check(config: Optional[SystemConfig] = None) -> Tuple[bool, str]:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
         return True, "连接正常"
+    except ImportError:
+        return False, "未安装 psycopg（pip install psycopg[binary] psycopg-pool）"
     except Exception as e:
         return False, str(e)

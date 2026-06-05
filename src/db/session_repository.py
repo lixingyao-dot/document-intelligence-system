@@ -8,8 +8,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from psycopg.rows import dict_row
-from psycopg.types.json import Json
+try:
+    from psycopg.rows import dict_row
+    from psycopg.types.json import Json
+except ImportError:  # 桌面打包未包含 psycopg
+    dict_row = None  # type: ignore[misc, assignment]
+    Json = None  # type: ignore[misc, assignment]
 
 from config import SystemConfig, get_config
 from db.connection import db_connection, is_database_configured

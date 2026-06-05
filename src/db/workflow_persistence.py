@@ -12,14 +12,6 @@ from typing import Any, Optional
 
 from config import SystemConfig, get_config
 from db.connection import db_connection, is_database_configured
-from db.repository import (
-    ensure_task,
-    get_task_by_task_id_in_conn,
-    insert_audit_log_conn,
-    insert_task_step,
-    mark_task_failed,
-    mark_task_succeeded,
-)
 
 
 def _task_business_id(spec: Any) -> str:
@@ -48,6 +40,12 @@ def persist_workflow_execute_begin(
 
     if not cfg.database.enabled or not is_database_configured(cfg):
         return task_id
+
+    from db.repository import (
+        ensure_task,
+        insert_audit_log_conn,
+        insert_task_step,
+    )
 
     tt = getattr(spec.task_type, "value", str(spec.task_type))
     with db_connection(cfg) as conn:
@@ -100,6 +98,14 @@ def persist_workflow_execute_end(
 
     if not cfg.database.enabled or not is_database_configured(cfg):
         return
+
+    from db.repository import (
+        get_task_by_task_id_in_conn,
+        insert_audit_log_conn,
+        insert_task_step,
+        mark_task_failed,
+        mark_task_succeeded,
+    )
 
     with db_connection(cfg) as conn:
         with conn.transaction():

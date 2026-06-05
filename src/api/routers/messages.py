@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from config import load_config, set_config
 from core.storage import build_blob_name, download_file_to_local, upload_file_to_storage, oss_storage_enabled
 from openpyxl import Workbook, load_workbook
-from db.auth_repository import resolve_user_from_authorization
+from db.auth_context import resolve_user_from_authorization
 from db.session_repository import (
     add_message,
     get_messages,

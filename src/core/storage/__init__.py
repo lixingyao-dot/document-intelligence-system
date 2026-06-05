@@ -1,7 +1,6 @@
-"""文件存储适配层（阿里云 OSS）。"""
+"""文件存储适配层（桌面：本地磁盘）。"""
 
-from .oss_storage import (
-    AliyunOSSStorage,
+from .local_storage import (
     build_blob_name,
     delete_file_from_storage,
     download_file_to_local,
@@ -12,7 +11,6 @@ from .oss_storage import (
 )
 
 __all__ = [
-    "AliyunOSSStorage",
     "build_blob_name",
     "delete_file_from_storage",
     "download_file_to_local",

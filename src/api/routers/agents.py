@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from config import load_config
 from core.storage import build_blob_name, download_file_to_local, upload_file_to_storage
-from db.auth_repository import resolve_user_from_authorization
+from db.auth_context import resolve_user_from_authorization
 from db.session_repository import add_session_file, get_session_by_id, get_session_files
 
 router = APIRouter(prefix="/api/agents", tags=["Agent编排"])

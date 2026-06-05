@@ -345,7 +345,7 @@ def memory_create_library_space(
     user_id: Optional[str] = None,
 ):
     global _library_store_next_space_id
-    from db.library_repository import LibrarySpaceRow
+    from db.models import LibrarySpaceRow
     sid = str(uuid.uuid4())
     now = datetime.utcnow()
     _library_store_spaces.append({
@@ -367,7 +367,7 @@ def memory_create_library_space(
 
 
 def memory_get_library_spaces(config=None, user_id: Optional[str] = None):
-    from db.library_repository import LibrarySpaceRow
+    from db.models import LibrarySpaceRow
     result = []
     for s in _library_store_spaces:
         if user_id and s.get("user_id") and s["user_id"] != user_id:
@@ -382,7 +382,7 @@ def memory_get_library_spaces(config=None, user_id: Optional[str] = None):
 
 
 def memory_get_library_space_by_id(space_id: str, config=None):
-    from db.library_repository import LibrarySpaceRow
+    from db.models import LibrarySpaceRow
     for s in _library_store_spaces:
         if str(s["id"]) == space_id:
             doc_count = sum(1 for d in _library_store_docs if d["space_id"] == s["id"] and d.get("deleted_at") is None)
@@ -395,7 +395,7 @@ def memory_get_library_space_by_id(space_id: str, config=None):
 
 
 def memory_update_library_space(space_id, name=None, icon=None, description=None, config=None, user_id=None):
-    from db.library_repository import LibrarySpaceRow
+    from db.models import LibrarySpaceRow
     for s in _library_store_spaces:
         if str(s["id"]) == space_id:
             if name is not None:
@@ -425,7 +425,7 @@ def memory_add_library_doc(
     space_id, file_name, file_size, config=None, user_id=None,
     mime_type=None, storage_key=None, blob_url=None,
 ):
-    from db.library_repository import LibraryDocRow
+    from db.models import LibraryDocRow
     global _library_store_next_doc_id
     did = str(uuid.uuid4())
     now = datetime.utcnow()
@@ -455,7 +455,7 @@ def memory_add_library_doc(
 
 
 def memory_get_library_docs(space_id, config=None, user_id=None):
-    from db.library_repository import LibraryDocRow
+    from db.models import LibraryDocRow
     result = []
     for d in _library_store_docs:
         if str(d["space_id"]) != space_id or d.get("deleted_at") is not None:
@@ -473,7 +473,7 @@ def memory_get_library_docs(space_id, config=None, user_id=None):
 
 
 def memory_get_library_doc_by_id(doc_id, config=None, user_id=None):
-    from db.library_repository import LibraryDocRow
+    from db.models import LibraryDocRow
     for d in _library_store_docs:
         if str(d["id"]) == doc_id and d.get("deleted_at") is None:
             return LibraryDocRow(
@@ -487,7 +487,7 @@ def memory_get_library_doc_by_id(doc_id, config=None, user_id=None):
 
 
 def memory_update_library_doc(doc_id, config=None, user_id=None):
-    from db.library_repository import LibraryDocRow
+    from db.models import LibraryDocRow
     for d in _library_store_docs:
         if str(d["id"]) == doc_id and d.get("deleted_at") is None:
             d["updated_at"] = datetime.utcnow()

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from config import load_config
 from utils.datetime_util import utc_iso
-from db.auth_repository import resolve_user_from_authorization
+from db.auth_context import resolve_user_from_authorization
 from db.session_repository import (
     create_session,
     delete_session,

@@ -108,3 +108,31 @@ class SessionListItem:
     message_count: int
     created_at: str
     updated_at: str
+
+
+@dataclass
+class LibrarySpaceRow:
+    id: str
+    user_id: Optional[str]
+    name: str
+    icon: str
+    description: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    doc_count: int = 0
+
+
+@dataclass
+class LibraryDocRow:
+    id: str
+    space_id: str
+    user_id: Optional[str]
+    file_name: str
+    file_size: int
+    mime_type: Optional[str]
+    file_extension: Optional[str]
+    storage_key: Optional[str]
+    blob_url: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    deleted_at: Optional[datetime] = None
