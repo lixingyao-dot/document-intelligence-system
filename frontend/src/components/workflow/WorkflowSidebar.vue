@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { Plus, GitBranch, Save, Workflow } from 'lucide-vue-next'
+import { Plus, GitBranch, Workflow, Trash2 } from 'lucide-vue-next'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import { resolveWorkflowIcon } from '../../utils/workflowIcons'
 
@@ -8,7 +8,6 @@ const workflowStore = useWorkflowStore()
 
 const activeSection = ref('workflow') // 'workflow' | 'toolbox'
 const isLoading = ref(false)
-const isSaving = ref(false)
 
 onMounted(async () => {
   isLoading.value = true
@@ -30,14 +29,10 @@ function handleNewWorkflow() {
   workflowStore.createNewWorkflow()
 }
 
-async function handleSaveWorkflow() {
-  if (isSaving.value || !workflowStore.currentWorkflowId) return
-  isSaving.value = true
-  try {
-    await workflowStore.saveCurrentWorkflow()
-  } finally {
-    isSaving.value = false
-  }
+async function handleDeleteWorkflow(e, workflowId) {
+  e.stopPropagation()
+  if (!confirm('确定删除该工作流？')) return
+  await workflowStore.deleteWorkflow(workflowId)
 }
 
 function handleAddNode(item) {
@@ -102,31 +97,6 @@ function onToolboxDragStart(e, item) {
           </button>
         </div>
 
-        <!-- 当前工作流：名称与保存 -->
-        <div v-if="workflowStore.currentWorkflowId" class="sidebar-section wf-meta-panel">
-          <label class="wf-meta-label" for="wf-name-input">工作流名称</label>
-          <input
-            id="wf-name-input"
-            class="wf-name-input"
-            type="text"
-            :value="workflowStore.workflowName"
-            placeholder="未命名工作流"
-            @input="workflowStore.updateWorkflowName($event.target.value)"
-          />
-          <p class="wf-meta-hint">{{ workflowStore.canvasNodes.length }} 个节点</p>
-          <button
-            type="button"
-            class="save-wf-btn"
-            :class="{ saving: isSaving }"
-            :disabled="isSaving"
-            @click="handleSaveWorkflow"
-          >
-            <Save v-if="!isSaving" :size="16" :stroke-width="2" aria-hidden="true" />
-            <span v-if="isSaving" class="save-spinner" aria-hidden="true"></span>
-            <span>{{ isSaving ? '保存中...' : '保存工作流' }}</span>
-          </button>
-        </div>
-
         <!-- Workflow List -->
         <div class="sidebar-scroll">
           <div class="workflow-group" v-if="workflowStore.workflowList.length > 0">
@@ -149,6 +119,13 @@ function onToolboxDragStart(e, item) {
                 <span class="workflow-name">{{ wf.name }}</span>
                 <span class="workflow-time">{{ wf.time }}</span>
               </div>
+              <button
+                class="workflow-delete-btn"
+                title="删除工作流"
+                @click="(e) => handleDeleteWorkflow(e, wf.id)"
+              >
+                <Trash2 :size="14" :stroke-width="2" />
+              </button>
             </div>
           </div>
 
@@ -314,6 +291,28 @@ function onToolboxDragStart(e, item) {
   flex-shrink: 0;
 }
 
+.workflow-delete-btn {
+  opacity: 0;
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  border-radius: 4px;
+  transition: all 0.15s;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.workflow-item:hover .workflow-delete-btn {
+  opacity: 1;
+}
+
+.workflow-delete-btn:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+}
+
 .workflow-empty {
   display: flex;
   flex-direction: column;
@@ -368,92 +367,5 @@ function onToolboxDragStart(e, item) {
 
 .toolbox-item-main:active {
   cursor: grabbing;
-}
-
-.wf-meta-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-}
-
-.wf-meta-label {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-
-.wf-name-input {
-  width: 100%;
-  padding: 9px 11px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  font-size: 13px;
-  color: var(--text-primary);
-  outline: none;
-}
-
-.wf-name-input:focus {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px rgba(66, 99, 235, 0.15);
-}
-
-.wf-meta-hint {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin: 0;
-}
-
-.wf-meta-hint--muted {
-  font-style: italic;
-}
-
-.save-wf-btn {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 10px 14px;
-  margin-top: 4px;
-  background: var(--gradient-primary);
-  border: none;
-  font-size: 13px;
-  font-weight: 600;
-  color: white;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.save-wf-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(66, 99, 235, 0.35);
-}
-
-.save-wf-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.save-wf-btn.saving {
-  background: var(--bg-hover);
-  color: var(--text-muted);
-}
-
-.save-spinner {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.35);
-  border-top-color: white;
-  animation: wf-save-spin 0.8s linear infinite;
-}
-
-@keyframes wf-save-spin {
-  to { transform: rotate(360deg); }
 }
 </style>

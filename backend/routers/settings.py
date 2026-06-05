@@ -44,8 +44,12 @@ async def put_settings(body: SettingsPayload):
         }
     merged = merge_settings_update(current, incoming)
     save_settings(merged)
-    import config as cfgmod
 
+    # 将最新配置写入环境变量，确保后续 load_config() 读到正确值
+    from backend.settings_store import apply_settings_to_env
+    apply_settings_to_env(merged)
+
+    import config as cfgmod
     cfgmod._config = None
     set_config(load_config())
     return {"success": True, "data": public_settings_view(merged)}

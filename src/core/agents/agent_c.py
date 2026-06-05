@@ -302,6 +302,11 @@ class AgentB(BaseAgent):
         if not template_columns:
             return AgentResponse(success=False, message="模板中未读取到表头列，请检查模板格式")
 
+        self.logger.info(
+            "[AgentC] 模板列=%s | 数据源列=%s | 数据行数=%d",
+            template_columns, columns, len(rows),
+        )
+
         column_mapping = self._build_template_column_mapping(
             source_columns=columns,
             template_columns=template_columns,
@@ -309,10 +314,14 @@ class AgentB(BaseAgent):
             parameters=task_spec.parameters,
         )
         mapped_source_cols = list(dict.fromkeys(column_mapping.values()))
+        self.logger.info(
+            "[AgentC] 列映射=%s | 映射到的数据源列=%s",
+            column_mapping, mapped_source_cols,
+        )
         if not mapped_source_cols:
             return AgentResponse(
                 success=False,
-                message="未能将模板表头与数据源列建立映射，请检查两边列名是否一致",
+                message=f"未能将模板表头与数据源列建立映射。模板列: {template_columns[:8]}，数据源列: {columns[:8]}",
             )
 
         fill_fields = [
@@ -320,7 +329,8 @@ class AgentB(BaseAgent):
             for t_col in column_mapping
             if not self._is_placeholder_template_column(t_col)
         ]
-        field_candidates = self._extract_field_candidates(instruction, mapped_source_cols)
+        # 筛选时用完整数据源列名，而非仅模板映射列——用户可能按模板外的列（如日期）筛选
+        field_candidates = self._extract_field_candidates(instruction, columns)
         fill_all = self._should_fill_all_rows(instruction, task_spec, [])
 
         if fill_all:
@@ -328,14 +338,14 @@ class AgentB(BaseAgent):
             plan: Dict[str, Any] = {}
             plan_source = "template_first_fill_all"
         else:
-            plan = self._build_filter_plan_with_llm(instruction, mapped_source_cols, field_candidates)
+            plan = self._build_filter_plan_with_llm(instruction, columns, field_candidates)
             llm_has_conditions = bool(plan.get("conditions"))
             llm_has_groups = bool(plan.get("groups"))
             plan_source = "template_first_llm"
 
             allow_rule_fallback = bool(task_spec.parameters.get("allow_rule_fallback", True))
             if (not llm_has_conditions and not llm_has_groups) and allow_rule_fallback:
-                plan = self._build_filter_plan_fallback(instruction, mapped_source_cols)
+                plan = self._build_filter_plan_fallback(instruction, columns)
                 plan_source = "template_first_rule_fallback"
 
             has_conditions = bool(plan.get("conditions"))
@@ -347,6 +357,10 @@ class AgentB(BaseAgent):
                 )
 
             filtered_rows = self._apply_filter_plan(rows, plan)
+            self.logger.info(
+                "[AgentC] 筛选计划=%s (source=%s) | 匹配行=%d / 总行=%d",
+                plan, plan_source, len(filtered_rows), len(rows),
+            )
 
         json_rows = self._project_rows_by_mapping(filtered_rows, column_mapping)
         output_path = self._write_rows_to_json(json_rows, task_spec.output_file or default_json_output)
@@ -357,23 +371,31 @@ class AgentB(BaseAgent):
                 "template_output_file",
                 str(source_dir / f"{source_path.stem}_filled{Path(template_path).suffix.lower() or '.xlsx'}"),
             )
-            template_output_path = self._fill_excel_template(
-                filtered_rows=filtered_rows,
-                template_path=template_path,
-                mapping=column_mapping,
-                parameters=task_spec.parameters,
-            )
+            try:
+                template_output_path = self._fill_excel_template(
+                    filtered_rows=filtered_rows,
+                    template_path=template_path,
+                    mapping=column_mapping,
+                    parameters=task_spec.parameters,
+                )
+                self.logger.info("[AgentC] Excel 模板填写完成: %s", template_output_path)
+            except Exception as e:
+                self.logger.error("[AgentC] Excel 模板填写失败: %s", e, exc_info=True)
         else:
             task_spec.parameters.setdefault(
                 "template_output_file",
                 str(source_dir / f"{source_path.stem}_filled{Path(template_path).suffix.lower() or '.docx'}"),
             )
-            template_output_path = self._fill_docx_template(
-                filtered_rows=filtered_rows,
-                template_path=template_path,
-                mapping=column_mapping,
-                parameters=task_spec.parameters,
-            )
+            try:
+                template_output_path = self._fill_docx_template(
+                    filtered_rows=filtered_rows,
+                    template_path=template_path,
+                    mapping=column_mapping,
+                    parameters=task_spec.parameters,
+                )
+                self.logger.info("[AgentC] Word 模板填写完成: %s", template_output_path)
+            except Exception as e:
+                self.logger.error("[AgentC] Word 模板填写失败: %s", e, exc_info=True)
 
         field_count = len(fill_fields) or len(column_mapping)
         if fill_all:
@@ -385,6 +407,11 @@ class AgentB(BaseAgent):
             )
         else:
             summary = f"填表完成：按模板 {field_count} 个字段写入 {len(filtered_rows)} 行（已筛选）"
+
+        self.logger.info(
+            "[AgentC] 填表结果: template_filled=%s, matched_rows=%d, template_output=%s",
+            bool(template_output_path), len(filtered_rows), template_output_path,
+        )
 
         return AgentResponse(
             success=True,
@@ -1502,6 +1529,11 @@ class AgentB(BaseAgent):
             field = cond.get("field")
             operator = str(cond.get("operator", "")).lower().strip()
             if field not in columns or operator not in self._operator_map:
+                if field not in columns:
+                    self.logger.warning(
+                        "[AgentC] 筛选条件字段 '%s' 不在可用列名中，已丢弃。可用列: %s",
+                        field, columns[:10],
+                    )
                 continue
 
             item = {"field": field, "operator": operator}
@@ -1540,6 +1572,11 @@ class AgentB(BaseAgent):
                 field = cond.get("field")
                 operator = str(cond.get("operator", "")).lower().strip()
                 if field not in columns or operator not in self._operator_map:
+                    if field not in columns:
+                        self.logger.warning(
+                            "[AgentC] 筛选条件字段 '%s' 不在可用列名中，已丢弃（group）。可用列: %s",
+                            field, columns[:10],
+                        )
                     continue
                 item = {"field": field, "operator": operator}
                 if operator == "between" and isinstance(cond.get("values"), list):
@@ -1557,6 +1594,14 @@ class AgentB(BaseAgent):
 
             if g_sanitized:
                 sanitized_groups.append({"logic": g_logic, "conditions": g_sanitized})
+
+        original_count = len(conditions) + sum(len(g.get("conditions", [])) for g in groups)
+        kept_count = len(sanitized) + sum(len(g.get("conditions", [])) for g in sanitized_groups)
+        if original_count > 0 and kept_count < original_count:
+            self.logger.warning(
+                "[AgentC] 筛选计划清洗: 原始条件数=%d, 保留=%d (丢弃了 %d 个条件，通常因字段名不匹配)",
+                original_count, kept_count, original_count - kept_count,
+            )
 
         return {"logic": logic, "conditions": sanitized, "groups": sanitized_groups}
 

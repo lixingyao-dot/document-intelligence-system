@@ -822,3 +822,83 @@ html.electron-glass:not(.is-maximized) .electron-shell-titlebar {
 .app.electron-shell .entity-preview-more {
   color: var(--text-muted);
 }
+
+.app.electron-shell .attachment-card {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  box-shadow: none !important;
+}
+
+.app.electron-shell .message.user .attachment-card {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  box-shadow: none !important;
+}
+
+/* ======== 不透明模式覆盖 ======== */
+html.electron-glass-opaque,
+html.electron-glass-opaque body,
+html.electron-glass-opaque #app {
+  background: #0f0f15 !important;
+}
+
+html.electron-glass-opaque .electron-root {
+  background: #0f0f15 !important;
+  box-shadow: none !important;
+}
+
+html.electron-glass-opaque .electron-root::before,
+html.electron-glass-opaque .electron-root::after {
+  display: none !important;
+}
+
+html.electron-glass-opaque .glass-desktop-bg,
+html.electron-glass-opaque .glass-blur-layer {
+  display: none !important;
+}
+
+html.electron-glass-opaque .app.electron-shell,
+html.electron-glass-opaque .app.electron-shell.app-outer-glass {
+  background: #0f0f15 !important;
+  --glass-panel: rgba(255, 255, 255, 0.06);
+  --glass-panel-strong: rgba(255, 255, 255, 0.09);
+  --glass-panel-hover: rgba(255, 255, 255, 0.13);
+  --glass-border: rgba(255, 255, 255, 0.15);
+  --glass-border-soft: rgba(255, 255, 255, 0.1);
+  --glass-blur: 0px;
+  --glass-saturate: 100%;
+}
+
+html.electron-glass-opaque .app-sidebar,
+html.electron-glass-opaque .main-content,
+html.electron-glass-opaque .chat-view,
+html.electron-glass-opaque .library-view,
+html.electron-glass-opaque .workflow-view,
+html.electron-glass-opaque .content-header,
+html.electron-glass-opaque .library-content,
+html.electron-glass-opaque .library-sidebar {
+  background: #0f0f15 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.electron-glass-opaque .app-sidebar {
+  background: #12121a !important;
+}
+
+html.electron-glass-opaque .electron-titlebar {
+  background: #12121a !important;
+}
+
+html.electron-glass-opaque .settings-overlay {
+  background: rgba(0, 0, 0, 0.5) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.electron-glass-opaque .settings-modal {
+  background: #1a1a24 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}

@@ -29,7 +29,7 @@ let unbindGlassInfo = null
 
 function syncElectronChromeClass() {
   const root = document.documentElement
-  root.classList.add('electron-glass')
+  root.classList.add('electron-glass-opaque')
   root.classList.toggle('electron-native-acrylic', glassMode.value === 'native-acrylic')
   root.classList.toggle('electron-screenshot-frost', glassMode.value === 'screenshot-fallback')
   root.classList.toggle('is-maximized', isMaximized.value)
@@ -116,7 +116,7 @@ onUnmounted(() => {
   unbindDesktopBackdrop?.()
   unbindGlassInfo?.()
   document.documentElement.classList.remove(
-    'electron-glass',
+    'electron-glass-opaque',
     'electron-native-acrylic',
     'electron-screenshot-frost',
     'is-maximized',

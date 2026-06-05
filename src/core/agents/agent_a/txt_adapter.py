@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+from core.llm.llm_service import get_llm_service
+from utils.logger import get_logger
 
 from .standard_style import get_standard_style_preset
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -21,10 +27,12 @@ class ActionExecutionResult:
 class TxtAdapter:
     """Adapter that applies action items to txt files."""
 
-    def __init__(self, file_path: str):
+    def __init__(self, file_path: str, llm_service=None):
         self.file_path = file_path
         self.content = Path(file_path).read_text(encoding="utf-8")
         self.execution_log: List[ActionExecutionResult] = []
+        self._llm_service = llm_service
+        self._document_understanding_cache: Optional[Dict[str, Any]] = None
 
     def apply_action(self, action: Dict[str, Any]) -> ActionExecutionResult:
         action_type = action.get("action_type", "")
@@ -61,6 +69,115 @@ class TxtAdapter:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self.content, encoding="utf-8")
         return str(path)
+
+    # ── LLM 文档语义理解 ──────────────────────────────────────────
+
+    @staticmethod
+    def _safe_load_json(text: str) -> Optional[Dict[str, Any]]:
+        """尝试从 LLM 响应中解析 JSON。"""
+        raw = (text or "").strip()
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except Exception:
+            pass
+        match = re.search(r"\{[\s\S]*\}", raw)
+        if not match:
+            return None
+        try:
+            return json.loads(match.group(0))
+        except Exception:
+            return None
+
+    def _llm_chat(self, system_prompt: str, user_prompt: str) -> Optional[Dict[str, Any]]:
+        """调用 LLM 获取结构化 JSON 结果，失败返回 None。"""
+        llm = self._llm_service or get_llm_service()
+        if not (llm and hasattr(llm, "is_available") and llm.is_available()):
+            return None
+        try:
+            original_streaming = None
+            can_toggle = hasattr(llm, "config") and hasattr(llm.config, "streaming")
+            if can_toggle:
+                original_streaming = llm.config.streaming
+                llm.config.streaming = False
+            try:
+                raw = llm.chat(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0,
+                )
+            finally:
+                if can_toggle:
+                    llm.config.streaming = original_streaming
+            return self._safe_load_json(raw)
+        except Exception as exc:
+            logger.warning("TxtAdapter LLM 调用失败: %s", exc)
+            return None
+
+    def _get_document_understanding(self) -> Dict[str, Any]:
+        """一次性 LLM 语义分析：识别标题、字段值、文档标题。结果缓存。"""
+        if self._document_understanding_cache is not None:
+            return self._document_understanding_cache
+
+        lines = self.content.splitlines()
+        non_empty = [(i, line.rstrip()) for i, line in enumerate(lines) if line.strip()]
+        if not non_empty:
+            self._document_understanding_cache = {}
+            return self._document_understanding_cache
+
+        items_text = "\n".join(f"{idx}: {text}" for idx, text in non_empty[:400])
+
+        system_prompt = (
+            "你是文档语义理解器。\n"
+            "请基于以下纯文本内容，识别章节标题、关键字段值和文档总标题。\n"
+            "标题可能是中文编号格式（一、二、（一）、1. 等）或没有标记但具有标题性质的短句。\n"
+            "只输出 JSON，不要解释。"
+        )
+        user_prompt = (
+            f"文本内容（行号:内容）:\n{items_text}\n\n"
+            "输出格式:\n"
+            '{"headings": [{"line": 行号, "title": "标题文本", "level": 级别}],'
+            ' "field_values": {"字段名": "值"},'
+            ' "document_title": {"title": "文档总标题", "line": 行号}}\n'
+            "如果没有总标题，document_title 为 {\"title\": \"\", \"line\": -1}。\n"
+            "level 参考：一级标题 1，二级标题 2，以此类推。"
+        )
+
+        parsed = self._llm_chat(system_prompt, user_prompt)
+        if not isinstance(parsed, dict):
+            self._document_understanding_cache = {}
+            return self._document_understanding_cache
+
+        result: Dict[str, Any] = {}
+        headings_raw = parsed.get("headings")
+        if isinstance(headings_raw, list):
+            result["headings"] = [
+                h for h in headings_raw
+                if isinstance(h, dict)
+                and isinstance(h.get("line"), (int, float))
+                and isinstance(h.get("title"), str) and h["title"].strip()
+            ]
+        else:
+            result["headings"] = []
+
+        fv = parsed.get("field_values")
+        result["field_values"] = fv if isinstance(fv, dict) else {}
+
+        dt = parsed.get("document_title")
+        if isinstance(dt, dict) and isinstance(dt.get("title"), str) and dt["title"].strip():
+            result["document_title"] = dt
+        else:
+            result["document_title"] = {"title": "", "line": -1}
+
+        logger.info(
+            "TxtAdapter 文档理解: headings=%d, fields=%d",
+            len(result["headings"]), len(result["field_values"]),
+        )
+        self._document_understanding_cache = result
+        return self._document_understanding_cache
 
     def _split_blocks(self) -> List[str]:
         raw = self.content.strip()
@@ -189,11 +306,36 @@ class TxtAdapter:
             if m:
                 extracted[key] = m.group(1).strip()
 
-        return {
+        # LLM 语义补充：标题、字段值、文档标题
+        headings: List[str] = []
+        llm_understanding_used = False
+        understanding = self._get_document_understanding()
+        if understanding:
+            llm_headings = understanding.get("headings", [])
+            if llm_headings:
+                headings = [h["title"] for h in llm_headings if h.get("title")]
+                llm_understanding_used = True
+
+            llm_fields = understanding.get("field_values", {})
+            if isinstance(llm_fields, dict):
+                for k, v in llm_fields.items():
+                    if k not in extracted and v:
+                        extracted[k] = str(v)
+                        llm_understanding_used = True
+
+        result = {
+            "headings": headings,
             "blocks": blocks,
             "fields": extracted,
             "summary": "\n".join(blocks[:3]),
+            "llm_understanding_used": llm_understanding_used,
         }
+
+        doc_title = understanding.get("document_title") if understanding else None
+        if isinstance(doc_title, dict) and doc_title.get("title"):
+            result["document_title"] = doc_title["title"]
+
+        return result
 
     def _apply_clear_document_content(self, target: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
         previous_chars = len(self.content or "")

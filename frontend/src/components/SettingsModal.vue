@@ -9,6 +9,7 @@ const PROVIDERS = [
   { id: 'deepseek', label: 'DeepSeek' },
   { id: 'zhipu', label: '智谱 GLM' },
   { id: 'openai', label: 'OpenAI 兼容' },
+  { id: 'mimo', label: '小米 MiMo' },
 ]
 
 const activeProvider = ref('deepseek')

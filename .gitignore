@@ -24,3 +24,4 @@ src/workspace/sessions/
 workspace/sessions/
 dist-electron.old.*/
 dist-electron.bak/
+test-fixtures/

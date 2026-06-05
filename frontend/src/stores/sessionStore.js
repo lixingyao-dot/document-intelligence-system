@@ -97,13 +97,17 @@ function finalizeTableFillProgressMessage(progressMsg, result, template_files, l
   const tf = result?.resp?.tableFillingData || progressMsg.tableFillingData
   const files = normalizeGeneratedFiles(result?.generated_files)
   const filled = tableFillHasFilledOutput(files, tf)
-  const baseMsg = String(tf?.message || '').trim()
+  const baseMsg = String(tf?.message || result?.error || '').trim()
   if (filled) {
     progressMsg.content = `填表完成：已将「${labels.src}」写入模板「${labels.tpl}」`
+  } else if (result?.success === false && baseMsg) {
+    progressMsg.content = `填表失败：${baseMsg}`
   } else if ((template_files || []).length) {
-    progressMsg.content =
-      baseMsg ||
-      `未能生成填好的 Excel，仅输出筛选 JSON。请确认模板列名与数据源一致，并在「模板」栏勾选 ${labels.tpl}。`
+    if (baseMsg) {
+      progressMsg.content = `${baseMsg}\n\n提示：请在「模板」栏勾选「${labels.tpl}」，并确认模板列名与数据源列名可匹配。`
+    } else {
+      progressMsg.content = `未能生成填好的 Excel，仅输出筛选 JSON。请确认模板列名与数据源一致，并在「模板」栏勾选 ${labels.tpl}。`
+    }
   } else if (baseMsg) {
     progressMsg.content = baseMsg
   }
@@ -157,20 +161,15 @@ function pickNewerIso(a, b) {
   return da.getTime() >= db.getTime() ? (a || b) : (b || a)
 }
 
-/** 聊天气泡：本地时区的 HH:mm（跨天则带日期） */
+/** 聊天气泡：本地时区的 MM/DD HH:mm（始终显示日期） */
 function formatMessageTime(isoString) {
   const date = parseApiTime(isoString)
   if (!date) return ''
-  const now = new Date()
-  const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
   const hh = String(date.getHours()).padStart(2, '0')
   const mm = String(date.getMinutes()).padStart(2, '0')
-  if (sameDay) return `${hh}:${mm}`
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
+  const now = new Date()
   if (date.getFullYear() === now.getFullYear()) return `${month}/${day} ${hh}:${mm}`
   return `${date.getFullYear()}/${month}/${day} ${hh}:${mm}`
 }
@@ -1089,7 +1088,9 @@ export const useSessionStore = defineStore('session', () => {
             } else {
               const entities = Array.isArray(parsed?.entities) ? parsed.entities : []
               const count = entities.length
-              const summary = `实体提取完成，共提取 ${count} 条数据`
+              const summary =
+                (typeof parsed?.message === 'string' && parsed.message.trim()) ||
+                `实体提取完成，共提取 ${count} 条数据`
               const lastMsg = messages.value[messages.value.length - 1]
               if (lastMsg && lastMsg.role === 'assistant') {
                 lastMsg.content = summary
@@ -1488,6 +1489,14 @@ export const useSessionStore = defineStore('session', () => {
       },
     })
 
+    // 首条用户消息自动命名会话
+    const userMsgCount = messages.value.filter(m => m.role === 'user').length
+    const currentTitle = sessions.value.find(s => s.session_id === sessionId)?.title || ''
+    if (userMsgCount === 1 && (!currentTitle || currentTitle === '新会话')) {
+      const autoTitle = content.trim().slice(0, 20) + (content.trim().length > 20 ? '...' : '')
+      updateSessionTitle(sessionId, autoTitle)
+    }
+
     isStreaming.value = true
 
     let allFiles = [...uploadedFiles]
@@ -1637,7 +1646,7 @@ export const useSessionStore = defineStore('session', () => {
     for (const r of results) {
       const mode = r?.task?.mode || r?.mode || r?.result_type
       if (mode === 'entity_extraction') {
-        const entities = r?.resp?.extractionData?.entities || []
+        const entities = r?.resp?.extractionData?.entities || r?.resp?.entities || []
         for (const entity of entities) {
           if (entity && typeof entity === 'object') {
             mergedEntities.push(entity)
@@ -1927,8 +1936,62 @@ export const useSessionStore = defineStore('session', () => {
     clearAllSelectedFiles()
     currentMode.value = originalMode
 
-    // 单文件直接返回
+    // 单文件：文档提取成功后写入模板（与多文件 mixed-fill 一致）
     if (taskList.length === 1) {
+      const r0 = results[0]
+      const progressMsg = findLatestMixedProgressMessage(messages.value, 0, taskList[0]?.file?.file_name)
+      if (
+        r0?.success &&
+        taskList[0]?.mode === 'entity_extraction' &&
+        template_files?.length &&
+        currentSessionId.value
+      ) {
+        const entities = r0?.resp?.extractionData?.entities || r0?.resp?.entities || []
+        if (entities.length > 0) {
+          const excelTpl = template_files.find((f) => getFileCategory(f?.file_name || '') === 'excel')
+          const selectedTemplate = excelTpl || template_files[0]
+          const templateRef =
+            selectedTemplate?.storage_key || selectedTemplate?.file_path || selectedTemplate?.path || ''
+          if (templateRef) {
+            try {
+              const mixedFillResp = await agentApi.mixedFill({
+                session_id: currentSessionId.value,
+                entities,
+                template_file: templateRef,
+                output_json: '',
+                output_template: '',
+              })
+              const mixedData = mixedFillResp?.data || {}
+              const mixedFillFiles = normalizeGeneratedFiles(mixedData.file_ids)
+              const rows = await loadJsonRowsFromArtifacts(
+                currentSessionId.value,
+                mixedData,
+                mixedFillFiles,
+              )
+              if (progressMsg) {
+                if (mixedFillFiles.length > 0) {
+                  progressMsg.generated_files = mixedFillFiles
+                }
+                if (rows.length > 0) {
+                  progressMsg.tableFillingData = {
+                    previewData: rows.slice(0, 50),
+                    matched_rows: rows.length,
+                    total_rows: rows.length,
+                    success: true,
+                    generated_files: mixedFillFiles,
+                  }
+                }
+                const tplName = selectedTemplate?.file_name || '模板'
+                progressMsg.content = `填表完成：已从「${taskList[0].file?.file_name || '文档'}」提取 ${entities.length} 条并写入模板「${tplName}」`
+              }
+            } catch (e) {
+              console.error('[混合模式] 单文件 mixed-fill 失败:', e)
+            }
+          }
+        }
+      }
+      isStreaming.value = false
+      showProgressBar.value = false
       console.log('[混合模式] 单文件处理完成')
       return
     }

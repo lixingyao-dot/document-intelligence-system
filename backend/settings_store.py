@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Optional
 
-PROVIDER_IDS = ("deepseek", "zhipu", "openai")
+PROVIDER_IDS = ("deepseek", "zhipu", "openai", "mimo")
 
 PROVIDER_MODELS: Dict[str, list] = {
     "deepseek": [
@@ -23,6 +23,12 @@ PROVIDER_MODELS: Dict[str, list] = {
         {"id": "gpt-4o-mini", "name": "GPT-4o Mini"},
         {"id": "gpt-4o", "name": "GPT-4o"},
         {"id": "gpt-4-turbo", "name": "GPT-4 Turbo"},
+    ],
+    "mimo": [
+        {"id": "mimo-v2.5-pro", "name": "MiMo V2.5 Pro"},
+        {"id": "mimo-v2.5", "name": "MiMo V2.5"},
+        {"id": "mimo-v2-pro", "name": "MiMo V2 Pro"},
+        {"id": "mimo-v2-omni", "name": "MiMo V2 Omni"},
     ],
 }
 
@@ -45,6 +51,12 @@ PROVIDER_META: Dict[str, Dict[str, str]] = {
         "default_base_url": "https://api.openai.com/v1",
         "api_key_field": "openai_api_key",
     },
+    "mimo": {
+        "label": "小米 MiMo",
+        "default_model": "mimo-v2.5",
+        "default_base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+        "api_key_field": "mimo_api_key",
+    },
 }
 
 ENV_BY_PROVIDER = {
@@ -62,6 +74,11 @@ ENV_BY_PROVIDER = {
         "api_key": "OPENAI_API_KEY",
         "model": "OPENAI_MODEL",
         "base_url": "OPENAI_BASE_URL",
+    },
+    "mimo": {
+        "api_key": "MIMO_API_KEY",
+        "model": "MIMO_MODEL",
+        "base_url": "MIMO_BASE_URL",
     },
 }
 

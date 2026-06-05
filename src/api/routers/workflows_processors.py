@@ -3,9 +3,14 @@
 """
 from typing import Any, Dict, List, Optional
 from config import SystemConfig
+from utils.file_utils import split_text_semantic_with_offset
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# 单次送入模型的正文字符上限（按句号/换行语义分块，长文档逐段处理后拼接）
+_LLM_CHUNK_CHARS = 4500
+_TRANSLATE_CHUNK_CHARS = _LLM_CHUNK_CHARS
 
 # 已从组件库下架（旧工作流命中时原样透传，避免执行失败）
 _RETIRED_SCHEMA_KEYS = frozenset({
@@ -180,17 +185,102 @@ def _entity_extraction_content(content: str, file_name: str, config_values: Dict
     return _chat_or_keep(content, prompt, "实体提取", temperature=0.2)
 
 
-def _translate_content(content: str, file_name: str, config: SystemConfig, config_values: Dict = None) -> Optional[str]:
-    """使用 LLM 翻译文档内容。"""
-    service = _get_llm_service()
-    if not service:
-        raise ValueError("文档翻译失败：大模型服务不可用，请在设置中配置 API Key 后重试")
+def _split_text_for_llm(content: str, max_chars: int = _LLM_CHUNK_CHARS) -> List[str]:
+    """长文档按语义边界分块，避免硬截断只处理开头一段。"""
+    text = content or ""
+    if len(text) <= max_chars:
+        return [text]
+    chunks = [piece for piece, _ in split_text_semantic_with_offset(text, max_chars)]
+    return chunks if chunks else [text[:max_chars]]
 
-    config_values = config_values or {}
-    text = content[:8000] if len(content) > 8000 else content
-    target_language = _target_language_label(config_values)
 
+def _split_text_for_translation(content: str, max_chars: int = _TRANSLATE_CHUNK_CHARS) -> List[str]:
+    return _split_text_for_llm(content, max_chars)
+
+
+def _chunk_processing_hint(chunk_index: int, chunk_total: int, instruction: str) -> str:
+    if chunk_total <= 1:
+        return ""
+    return (
+        f"\n\n【分段说明】这是长文档的第 {chunk_index}/{chunk_total} 段。"
+        f"{instruction}"
+    )
+
+
+def _output_token_budget(text_len: int, *, min_tokens: int = 4096, max_cap: int = 16384) -> int:
+    return max(min_tokens, min(max_cap, text_len * 2 + 1024))
+
+
+def _llm_chat(
+    service,
+    messages: List[Dict[str, str]],
+    text_len: int,
+    *,
+    temperature: float = 0.3,
+) -> str:
+    response = service.chat(
+        messages=messages,
+        temperature=temperature,
+        max_tokens=_output_token_budget(text_len),
+        strip_markdown_output=False,
+    )
+    return response if isinstance(response, str) else str(response)
+
+
+def _map_document_chunks(
+    content: str,
+    file_name: str,
+    task_label: str,
+    process_piece,
+) -> str:
+    """对长文档分块 map，再拼接为完整结果（用于翻译/增强/脱敏等全文变换）。"""
+    chunks = _split_text_for_llm(content)
+    total = len(chunks)
+    if total > 1:
+        logger.info(
+            "工作流%s分块: file=%s total_chars=%d chunks=%d",
+            task_label,
+            file_name,
+            len(content or ""),
+            total,
+        )
+    parts: List[str] = []
+    for idx, piece in enumerate(chunks, start=1):
+        if not piece.strip():
+            parts.append(piece)
+            continue
+        out = process_piece(piece, idx, total)
+        parts.append(out)
+        if total > 1:
+            logger.info(
+                "工作流%s进度: file=%s chunk=%d/%d in=%d out=%d",
+                task_label,
+                file_name,
+                idx,
+                total,
+                len(piece),
+                len(out),
+            )
+    return "".join(parts)
+
+
+def _build_translate_prompt(
+    text: str,
+    target_language: str,
+    config_values: Dict,
+    *,
+    chunk_index: int = 1,
+    chunk_total: int = 1,
+) -> str:
+    """构造翻译 user prompt（支持长文档分块提示）。"""
     custom_prompt = str(config_values.get("prompt") or "").strip()
+    chunk_hint = ""
+    if chunk_total > 1:
+        chunk_hint = (
+            f"\n\n【分段说明】这是长文档的第 {chunk_index}/{chunk_total} 段。"
+            "请完整翻译本段全部内容，仅输出本段译文，不要省略或概括。"
+        )
+
     if custom_prompt:
         prompt = (
             custom_prompt.replace("{content}", text)
@@ -201,9 +291,12 @@ def _translate_content(content: str, file_name: str, config: SystemConfig, confi
             prompt = (
                 f"{prompt}\n\n"
                 f"【硬性要求】目标语言：{target_language}。"
-                f"必须将下方全文翻译为{target_language}，仅输出译文，不要保留未翻译的原文段落。\n\n"
+                f"必须将下方全文翻译为{target_language}，仅输出译文，不要保留未翻译的原文段落。"
+                f"{chunk_hint}\n\n"
                 f"文档内容：\n{text}"
             )
+        else:
+            prompt = f"{prompt}{chunk_hint}"
     else:
         prompt = (
             f"你是一个专业的文档翻译助手。请将以下文档全文翻译为{target_language}，保持原文的格式和结构。\n"
@@ -213,67 +306,216 @@ def _translate_content(content: str, file_name: str, config: SystemConfig, confi
             "3. 保留代码块、表格等特殊格式\n"
             "4. 不要添加或删除内容，只进行翻译\n"
             "5. 仅输出译文，不要附带解释\n"
-            f"6. {_translate_language_constraints(target_language)}\n\n"
+            f"6. {_translate_language_constraints(target_language)}\n"
+            f"{chunk_hint}\n\n"
             f"文档内容：\n{text}"
         )
 
     lang_constraint = _translate_language_constraints(target_language)
     if lang_constraint not in prompt:
         prompt = f"{prompt}\n\n【语言约束】{lang_constraint}"
+    return prompt
+
+
+def _translate_single_chunk(
+    service,
+    text: str,
+    target_language: str,
+    config_values: Dict,
+    *,
+    chunk_index: int = 1,
+    chunk_total: int = 1,
+) -> str:
+    """翻译单个文本块。"""
+    lang_constraint = _translate_language_constraints(target_language)
+    prompt = _build_translate_prompt(
+        text,
+        target_language,
+        config_values,
+        chunk_index=chunk_index,
+        chunk_total=chunk_total,
+    )
+    # 译文长度通常接近原文，默认 max_tokens=4096 容易截断输出
+    out_budget = max(4096, min(16384, len(text) * 2 + 1024))
+    response = service.chat(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"你是文档翻译器。用户指定的目标语言是：{target_language}。"
+                    f"{lang_constraint} 只输出译文正文，不要省略段落。"
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.3,
+        max_tokens=out_budget,
+        strip_markdown_output=False,
+    )
+    return response if isinstance(response, str) else str(response)
+
+
+def _translate_content(content: str, file_name: str, config: SystemConfig, config_values: Dict = None) -> Optional[str]:
+    """使用 LLM 翻译文档内容（长文档自动分块，逐段翻译后拼接）。"""
+    service = _get_llm_service()
+    if not service:
+        raise ValueError("文档翻译失败：大模型服务不可用，请在设置中配置 API Key 后重试")
+
+    config_values = config_values or {}
+    target_language = _target_language_label(config_values)
+
+    def _process(piece: str, chunk_index: int, chunk_total: int) -> str:
+        return _translate_single_chunk(
+            service,
+            piece,
+            target_language,
+            config_values,
+            chunk_index=chunk_index,
+            chunk_total=chunk_total,
+        )
 
     try:
-        response = service.chat(
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        f"你是文档翻译器。用户指定的目标语言是：{target_language}。"
-                        f"{lang_constraint} 只输出译文正文。"
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.3,
-            strip_markdown_output=False,
-        )
-        return response if isinstance(response, str) else str(response)
+        return _map_document_chunks(content, file_name, "翻译", _process)
     except Exception as e:
         logger.error(f"LLM 翻译失败: {e}")
         raise ValueError(f"文档翻译失败：{e}") from e
 
 
+def _summary_length_hint(config_values: Dict) -> str:
+    summary_length = config_values.get("summaryLength", "medium")
+    return {"short": "200字以内", "medium": "500字以内", "detailed": "1000字以内"}.get(
+        summary_length, "500字以内"
+    )
+
+
+def _build_summary_chunk_prompt(
+    text: str,
+    config_values: Dict,
+    *,
+    chunk_index: int = 1,
+    chunk_total: int = 1,
+    partial: bool = False,
+) -> str:
+    """构造摘要 prompt；partial=True 时对单段做局部摘要/要点。"""
+    custom_prompt = str(config_values.get("prompt") or "").strip()
+    extract_type = config_values.get("extractType", "summary")
+    length_hint = _summary_length_hint(config_values)
+    chunk_hint = _chunk_processing_hint(
+        chunk_index,
+        chunk_total,
+        "请仅基于本段内容生成摘要/要点，不要编造本段未出现的信息。"
+        if partial
+        else "",
+    )
+
+    if custom_prompt:
+        prompt = (
+            custom_prompt.replace("{content}", text)
+            if "{content}" in custom_prompt
+            else f"{custom_prompt}\n{text}"
+        )
+        return f"{prompt}{chunk_hint}"
+
+    if partial:
+        if extract_type == "summary":
+            return (
+                f"请为以下文档片段生成简短摘要（每段不超过 {length_hint}）：\n"
+                f"{chunk_hint}\n\n{text}"
+            )
+        if extract_type == "keypoints":
+            return (
+                "请从以下文档片段中提取 2-4 个关键要点，用换行列出：\n"
+                f"{chunk_hint}\n\n{text}"
+            )
+        return (
+            f"请为以下文档片段生成简短摘要，并列出 2-4 个要点：\n"
+            f"{chunk_hint}\n\n{text}"
+        )
+
+    if extract_type == "summary":
+        return f"请为以下文档生成摘要（{length_hint}）：\n{text}"
+    if extract_type == "keypoints":
+        return f"请从以下文档中提取3-5个关键要点，用\n开头列出：\n{text}"
+    return (
+        f"请为以下文档生成摘要（{length_hint}），然后在【要点】下列出3-5个关键要点：\n{text}"
+    )
+
+
+def _build_summary_merge_prompt(partial_summaries: List[str], config_values: Dict) -> str:
+    extract_type = config_values.get("extractType", "summary")
+    length_hint = _summary_length_hint(config_values)
+    joined = "\n\n---\n\n".join(
+        f"【片段 {i}】\n{s.strip()}" for i, s in enumerate(partial_summaries, start=1) if s.strip()
+    )
+    if extract_type == "summary":
+        return (
+            f"以下是同一长文档各片段的局部摘要。请合并为一份连贯的全文摘要（{length_hint}），"
+            "去重、理顺逻辑，仅输出最终摘要：\n\n"
+            f"{joined}"
+        )
+    if extract_type == "keypoints":
+        return (
+            "以下是同一长文档各片段提取的要点。请合并去重，输出 3-8 条全文关键要点，"
+            "每条一行，以 - 开头：\n\n"
+            f"{joined}"
+        )
+    return (
+        f"以下是同一长文档各片段的局部摘要与要点。请合并为一份全文结果："
+        f"先给出摘要（{length_hint}），再在【要点】下给出 3-8 条合并后的关键要点：\n\n"
+        f"{joined}"
+    )
+
+
 def _extract_summary_content(content: str, file_name: str, config_values: Dict) -> Optional[str]:
-    """提取文档摘要和要点。"""
+    """提取文档摘要和要点（长文档：分块摘要 → 总摘要）。"""
     service = _get_llm_service()
     if not service:
         raise ValueError("内容提取失败：大模型服务不可用，请在设置中配置 API Key 后重试")
-    
-    # 如果用户提供了自定义提示词，优先使用
-    custom_prompt = config_values.get("prompt", "").strip()
-    if custom_prompt:
-        text = content[:8000] if len(content) > 8000 else content
-        prompt = custom_prompt.replace("{content}", text) if "{content}" in custom_prompt else f"{custom_prompt}\n{text}"
-    else:
-        extract_type = config_values.get("extractType", "summary")
-        summary_length = config_values.get("summaryLength", "medium")
-        length_hint = {"short": "200字以内", "medium": "500字以内", "detailed": "1000字以内"}.get(summary_length, "500字以内")
-        
-        text = content[:8000] if len(content) > 8000 else content
-        
-        if extract_type == "summary":
-            prompt = f"请为以下文档生成摘要（{length_hint}）：\n{text}"
-        elif extract_type == "keypoints":
-            prompt = f"请从以下文档中提取3-5个关键要点，用\n开头列出：\n{text}"
-        else:  # both
-            prompt = f"请为以下文档生成摘要（{length_hint}），然后在【要点】下列出3-5个关键要点：\n{text}"
-    
+
+    config_values = config_values or {}
+    chunks = _split_text_for_llm(content)
+    total = len(chunks)
+
     try:
-        response = service.chat(
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.5,
-            strip_markdown_output=False,
+        if total == 1:
+            piece = chunks[0]
+            prompt = _build_summary_chunk_prompt(piece, config_values)
+            return _llm_chat(
+                service,
+                [{"role": "user", "content": prompt}],
+                len(piece),
+                temperature=0.5,
+            )
+
+        logger.info(
+            "工作流摘要分块: file=%s total_chars=%d chunks=%d",
+            file_name,
+            len(content or ""),
+            total,
         )
-        return response if isinstance(response, str) else str(response)
+        partials: List[str] = []
+        for idx, piece in enumerate(chunks, start=1):
+            if not piece.strip():
+                continue
+            prompt = _build_summary_chunk_prompt(
+                piece, config_values, chunk_index=idx, chunk_total=total, partial=True
+            )
+            partial = _llm_chat(
+                service,
+                [{"role": "user", "content": prompt}],
+                len(piece),
+                temperature=0.5,
+            )
+            partials.append(partial)
+            logger.info("工作流摘要片段: file=%s chunk=%d/%d", file_name, idx, total)
+
+        merge_prompt = _build_summary_merge_prompt(partials, config_values)
+        return _llm_chat(
+            service,
+            [{"role": "user", "content": merge_prompt}],
+            len(merge_prompt),
+            temperature=0.4,
+        )
     except Exception as e:
         logger.error(f"摘要提取失败: {e}")
         raise ValueError(f"内容提取失败：{e}") from e
@@ -391,76 +633,121 @@ def _analyze_content(content: str, file_name: str, config_values: Dict) -> Optio
         raise ValueError(f"内容分析失败：{e}") from e
 
 
+def _build_enhance_prompt(text: str, config_values: Dict, *, chunk_index: int = 1, chunk_total: int = 1) -> str:
+    custom_prompt = str(config_values.get("prompt") or "").strip()
+    chunk_hint = _chunk_processing_hint(
+        chunk_index,
+        chunk_total,
+        "请完整处理本段全部文本，仅输出处理后的本段正文，不要省略或概括。",
+    )
+    if custom_prompt:
+        prompt = (
+            custom_prompt.replace("{content}", text)
+            if "{content}" in custom_prompt
+            else f"{custom_prompt}\n{text}"
+        )
+        return f"{prompt}{chunk_hint}"
+
+    enhance_type = config_values.get("enhanceType", "grammar")
+    style = config_values.get("style", "concise")
+    style_desc = {
+        "concise": "简洁风格",
+        "formal": "学术风格",
+        "casual": "口语风格",
+        "professional": "专业风格",
+    }.get(style, "简洁风格")
+
+    if enhance_type == "grammar":
+        base = f"请检查并修正以下文本的语法错误，只返回修正后的文本：\n{text}"
+    elif enhance_type == "polish":
+        base = f"请润色以下文本为{style_desc}，提高表达质量，保持原意：\n{text}"
+    elif enhance_type == "rephrase":
+        base = f"请改写以下文本为{style_desc}，保持原意但使用不同的措辞：\n{text}"
+    else:
+        base = (
+            f"请对以下文本进行全面优化：1. 检查语法 2. 润色表达 3. 调整为{style_desc}。"
+            f"返回优化后的文本：\n{text}"
+        )
+    return f"{base}{chunk_hint}"
+
+
 def _enhance_text_content(content: str, file_name: str, config_values: Dict) -> Optional[str]:
-    """文本增强：语法检查、润色、改写等。"""
+    """文本增强：语法检查、润色、改写等（长文档分块处理后拼接）。"""
     service = _get_llm_service()
     if not service:
         raise ValueError("大模型服务不可用，请在设置中配置 API Key 后重试")
-    
-    # 如果用户提供了自定义提示词，优先使用
-    custom_prompt = config_values.get("prompt", "").strip()
-    if custom_prompt:
-        text = content[:8000] if len(content) > 8000 else content
-        prompt = custom_prompt.replace("{content}", text) if "{content}" in custom_prompt else f"{custom_prompt}\n{text}"
-    else:
-        enhance_type = config_values.get("enhanceType", "grammar")
-        style = config_values.get("style", "concise")
-        text = content[:8000] if len(content) > 8000 else content
-        
-        style_desc = {
-            "concise": "简洁风格",
-            "formal": "学术风格",
-            "casual": "口语风格",
-            "professional": "专业风格"
-        }.get(style, "简洁风格")
-        
-        if enhance_type == "grammar":
-            prompt = f"请检查并修正以下文本的语法错误，只返回修正后的文本：\n{text}"
-        elif enhance_type == "polish":
-            prompt = f"请润色以下文本为{style_desc}，提高表达质量，保持原意：\n{text}"
-        elif enhance_type == "rephrase":
-            prompt = f"请改写以下文本为{style_desc}，保持原意但使用不同的措辞：\n{text}"
-        else:  # all
-            prompt = f"请对以下文本进行全面优化：1. 检查语法 2. 润色表达 3. 调整为{style_desc}。返回优化后的文本：\n{text}"
-    
-    try:
-        response = service.chat(
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.6,
-            strip_markdown_output=False,
+
+    config_values = config_values or {}
+
+    def _process(piece: str, chunk_index: int, chunk_total: int) -> str:
+        prompt = _build_enhance_prompt(
+            piece, config_values, chunk_index=chunk_index, chunk_total=chunk_total
         )
-        return response if isinstance(response, str) else str(response)
+        return _llm_chat(
+            service,
+            [{"role": "user", "content": prompt}],
+            len(piece),
+            temperature=0.6,
+        )
+
+    try:
+        return _map_document_chunks(content, file_name, "文本增强", _process)
     except Exception as e:
         logger.error(f"文本增强失败: {e}")
         raise ValueError(f"文本增强失败：{e}") from e
 
 
+def _build_masking_prompt(text: str, config_values: Dict, *, chunk_index: int = 1, chunk_total: int = 1) -> str:
+    mask_token = str(config_values.get("maskToken", "*")).strip() or "*"
+    custom_prompt = str(config_values.get("prompt") or "").strip()
+    chunk_hint = _chunk_processing_hint(
+        chunk_index,
+        chunk_total,
+        "请对本段全部文本做脱敏，仅输出脱敏后的本段正文，不要省略段落。",
+    )
+    if custom_prompt:
+        prompt = (
+            custom_prompt.replace("{content}", text)
+            if "{content}" in custom_prompt
+            else f"{custom_prompt}\n{text}"
+        )
+        return f"{prompt}{chunk_hint}"
+
+    return (
+        "请对文本进行敏感信息脱敏，至少处理以下类型：手机号、身份证号、邮箱、银行卡号。\n"
+        f"脱敏符号使用：{mask_token}\n"
+        "规则：\n"
+        "- 手机号保留前3后4\n"
+        "- 身份证保留前6后4\n"
+        "- 邮箱保留首字符与域名\n"
+        "- 其他长数字串按前后各2位保留\n"
+        "输出：仅返回脱敏后的文本。\n"
+        f"{chunk_hint}\n\n"
+        f"文本：\n{text}"
+    )
+
+
 def _sensitive_masking_content(content: str, file_name: str, config_values: Dict) -> Optional[str]:
-    """敏感信息脱敏。"""
+    """敏感信息脱敏（长文档分块脱敏后拼接）。"""
     service = _get_llm_service()
     if not service:
         raise ValueError("大模型服务不可用，请在设置中配置 API Key 后重试")
 
-    text = content[:8000] if len(content) > 8000 else content
-    mask_token = str(config_values.get("maskToken", "*")).strip() or "*"
-    custom_prompt = str(config_values.get("prompt", "")).strip()
-    if custom_prompt:
-        prompt = custom_prompt.replace("{content}", text) if "{content}" in custom_prompt else f"{custom_prompt}\n{text}"
-    else:
-        prompt = (
-            "请对文本进行敏感信息脱敏，至少处理以下类型：手机号、身份证号、邮箱、银行卡号。\n"
-            f"脱敏符号使用：{mask_token}\n"
-            "规则：\n"
-            "- 手机号保留前3后4\n"
-            "- 身份证保留前6后4\n"
-            "- 邮箱保留首字符与域名\n"
-            "- 其他长数字串按前后各2位保留\n"
-            "输出：仅返回脱敏后的文本。\n\n"
-            f"文本：\n{text}"
+    config_values = config_values or {}
+
+    def _process(piece: str, chunk_index: int, chunk_total: int) -> str:
+        prompt = _build_masking_prompt(
+            piece, config_values, chunk_index=chunk_index, chunk_total=chunk_total
         )
+        return _llm_chat(
+            service,
+            [{"role": "user", "content": prompt}],
+            len(piece),
+            temperature=0.2,
+        )
+
     try:
-        response = service.chat(messages=[{"role": "user", "content": prompt}], temperature=0.2, strip_markdown_output=False)
-        return response if isinstance(response, str) else str(response)
+        return _map_document_chunks(content, file_name, "脱敏", _process)
     except Exception as e:
         logger.error(f"敏感信息脱敏失败: {e}")
         raise ValueError(f"敏感信息脱敏失败：{e}") from e

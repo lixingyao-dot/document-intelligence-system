@@ -479,6 +479,9 @@ def _normalize_entity_extraction_response(raw_response: str) -> str:
 
     entities = parsed.get("entities")
     count = len(entities) if isinstance(entities, list) else 0
+    message = str(parsed.get("message") or "").strip()
+    if message:
+        return message
     return f"实体提取完成，共提取 {count} 条数据"
 
 
@@ -676,6 +679,14 @@ def _save_entity_extraction_files(session_id: str, cfg, user_id: Optional[str], 
 
 def _save_table_filling_files(session_id: str, cfg, user_id: Optional[str], table_filling_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     """将表格填表结果保存为填好的模板与可选 JSON，记录到数据库（模板优先）。"""
+    print(
+        f"[WS] _save_table_filling_files 开始: "
+        f"template_output={table_filling_data.get('template_output')} "
+        f"template_source={table_filling_data.get('template_source')} "
+        f"template_filled={table_filling_data.get('template_filled')} "
+        f"output_json={table_filling_data.get('output_json')} "
+        f"matched_rows={table_filling_data.get('matched_rows')}"
+    )
     uploads_dir = Path("workspace/uploads") / session_id
     uploads_dir.mkdir(parents=True, exist_ok=True)
     saved_files: List[Dict[str, Any]] = []

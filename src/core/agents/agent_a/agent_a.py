@@ -130,7 +130,7 @@ class AgentA(BaseAgent):
 
 		elif md_file and Path(md_file.path).exists():
 			source_path = Path(md_file.path).resolve()
-			adapter = MdAdapter(md_file.path)
+			adapter = MdAdapter(md_file.path, llm_service=get_llm_service())
 			for action in action_plan.model_dump().get("actions", []):
 				result = adapter.apply_action(action)
 				execution_report.append(
@@ -154,7 +154,7 @@ class AgentA(BaseAgent):
 
 		elif txt_file and Path(txt_file.path).exists():
 			source_path = Path(txt_file.path).resolve()
-			adapter = TxtAdapter(txt_file.path)
+			adapter = TxtAdapter(txt_file.path, llm_service=get_llm_service())
 			for action in action_plan.model_dump().get("actions", []):
 				result = adapter.apply_action(action)
 				execution_report.append(

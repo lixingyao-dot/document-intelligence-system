@@ -55,7 +55,7 @@ ACTION_FILE_COMPATIBILITY: Dict[str, Dict[str, Dict[str, str]]] = {
         },
         "md": {
             "status": "supported",
-            "hint": "md 将统一标题层级、列表与空行风格。",
+            "hint": "md 将规范列表符号、标题前后空行与多余空行。",
         },
         "xlsx": {
             "status": "supported",
@@ -63,7 +63,7 @@ ACTION_FILE_COMPATIBILITY: Dict[str, Dict[str, Dict[str, str]]] = {
         },
         "txt": {
             "status": "supported",
-            "hint": "txt 将做文本级规范化（缩进、空行、分段样式）。",
+            "hint": "txt 将规范化空白字符与空行。",
         },
     },
     "reorder_paragraphs": {
@@ -105,19 +105,19 @@ ACTION_FILE_COMPATIBILITY: Dict[str, Dict[str, Dict[str, str]]] = {
     "extract_content": {
         "docx": {
             "status": "supported",
-            "hint": "docx 支持结构化内容提取。",
+            "hint": "docx 支持提取标题、段落与指定字段。",
         },
         "md": {
             "status": "supported",
-            "hint": "md 支持内容提取与字段抽取。",
+            "hint": "md 支持提取标题、段落块与指定字段（需提供字段名）。",
         },
         "xlsx": {
             "status": "supported",
-            "hint": "xlsx 支持表格字段提取。",
+            "hint": "xlsx 支持提取表格字段数据。",
         },
         "txt": {
             "status": "supported",
-            "hint": "txt 支持文本字段抽取。",
+            "hint": "txt 支持提取标题、段落与指定字段（需提供字段名）。",
         },
     },
     "replace_text": {

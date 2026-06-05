@@ -106,6 +106,16 @@ function assistantHasRenderableText(msg) {
   return msg?.role === 'assistant' && String(msg?.content ?? '').trim().length > 0
 }
 
+function hasGeneratedFiles(msg) {
+  const gf = msg?.generated_files
+  if (Array.isArray(gf) && gf.length > 0) return true
+  const tf = msg?.tableFillingData?.generated_files
+  if (Array.isArray(tf) && tf.length > 0) return true
+  const de = msg?.documentEditingData?.generated_files
+  if (Array.isArray(de) && de.length > 0) return true
+  return false
+}
+
 function autoResize() {
   if (textareaRef.value) {
     textareaRef.value.style.height = 'auto'
@@ -581,8 +591,11 @@ function userMessageAttachments(msg) {
             <div v-else class="message-bubble" :class="{ 'md-content': msg.role === 'assistant' }">
               <template v-if="msg.role === 'assistant'">
                 <div v-if="assistantHasRenderableText(msg)" v-html="renderMarkdown(msg.content)"></div>
+                <div v-else-if="!msg.isLoading && hasGeneratedFiles(msg)" class="assistant-empty-hint assistant-success-hint" role="status">
+                  文档处理完成，请查看下方生成结果。
+                </div>
                 <div v-else-if="!msg.isLoading" class="assistant-empty-hint" role="status">
-                  （暂无正文回复，请核对 LLM 配置与后端日志。DeepSeek OpenAI 兼容：base_url 使用官方文档中的地址，模型如 deepseek-v4-flash。）
+                  （暂无正文回复，请检查 API Key、模型名称和 Base URL 是否配置正确。）
                 </div>
               </template>
               <!-- Loading 动画 -->
@@ -1264,6 +1277,10 @@ function userMessageAttachments(msg) {
   color: var(--text-muted);
   line-height: 1.55;
   padding: 6px 0;
+}
+
+.assistant-success-hint {
+  color: var(--accent-success, #10b981);
 }
 
 /* ============ 聊天输入区（附件在上 + 圆角输入框） ============ */
