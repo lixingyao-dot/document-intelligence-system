@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('docIntelDesktop', {
   glassMode,
   dialog: {
     pickDirectory: () => ipcRenderer.invoke('dialog:pickDirectory'),
+    pickOpenFiles: (opts) => ipcRenderer.invoke('dialog:pickOpenFiles', opts),
     saveFile: (opts) => ipcRenderer.invoke('dialog:saveFile', opts),
     saveFileFromBuffer: (opts) => ipcRenderer.invoke('dialog:saveFileFromBuffer', opts),
   },

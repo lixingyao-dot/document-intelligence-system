@@ -10,8 +10,14 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from psycopg.errors import DeadlockDetected
-from psycopg.rows import dict_row
+try:
+    from psycopg.errors import DeadlockDetected
+    from psycopg.rows import dict_row
+except ImportError:  # 桌面打包未包含 psycopg
+    class DeadlockDetected(Exception):
+        pass
+
+    dict_row = None  # type: ignore[misc, assignment]
 
 from config import SystemConfig, get_config
 from db.connection import db_connection, is_database_configured

@@ -244,6 +244,15 @@ def load_config() -> SystemConfig:
             config.llm.model = os.getenv("ZHIPU_MODEL", "glm-4-flash")
         if not config.llm.base_url:
             config.llm.base_url = os.getenv("ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
+    elif prov == "mimo":
+        if os.getenv("MIMO_API_KEY"):
+            config.llm.api_key = os.getenv("MIMO_API_KEY")
+        if not explicit_llm_model:
+            config.llm.model = os.getenv("MIMO_MODEL", "mimo-v2.5")
+        if not config.llm.base_url:
+            config.llm.base_url = os.getenv(
+                "MIMO_BASE_URL", "https://token-plan-cn.xiaomimimo.com/v1"
+            )
     elif prov in ("openai", "openai-compatible"):
         if os.getenv("OPENAI_API_KEY"):
             config.llm.api_key = os.getenv("OPENAI_API_KEY")

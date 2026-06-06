@@ -28,3 +28,19 @@ export async function pickOutputFolder() {
     return null
   }
 }
+
+/**
+ * 打开文件资源管理器选择文件（仅 Electron）
+ * @param {{ title?: string, filters?: Array<{name: string, extensions: string[]}> }} [opts]
+ * @returns {Promise<string[]>} 选中的文件路径数组
+ */
+export async function pickOpenFiles(opts) {
+  if (!isElectronShell()) return []
+  const pick = window.docIntelDesktop?.dialog?.pickOpenFiles
+  if (typeof pick !== 'function') return []
+  try {
+    return await pick(opts)
+  } catch {
+    return []
+  }
+}

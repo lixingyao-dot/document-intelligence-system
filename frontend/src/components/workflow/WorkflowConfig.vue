@@ -4,19 +4,20 @@ import { MousePointerClick } from 'lucide-vue-next'
 import { useWorkflowStore, workflowFileMatchesKind } from '../../stores/workflowStore'
 import { useLibraryStore } from '../../stores/libraryStore'
 import { resolveWorkflowIcon } from '../../utils/workflowIcons'
-import { isElectronShell, pickOutputFolder } from '../../utils/desktopShell'
+import { isElectronShell, pickOutputFolder, pickOpenFiles } from '../../utils/desktopShell'
 
 const workflowStore = useWorkflowStore()
 const libraryStore = useLibraryStore()
 
-const workflowSourceKind = computed(() => workflowStore.workflowInputFileKind)
+const workflowSourceKind = computed(() => workflowStore.workflowInputFileKinds)
 
 function docMatchesWorkflowKind(docName) {
-  return workflowFileMatchesKind(docName, workflowSourceKind.value)
+  const kinds = workflowSourceKind.value
+  return Array.isArray(kinds) ? kinds.some(k => workflowFileMatchesKind(docName, k)) : workflowFileMatchesKind(docName, kinds)
 }
 
 const localFileAccept = computed(() => {
-  const k = workflowSourceKind.value
+  const kinds = workflowSourceKind.value
   const m = {
     pdf: '.pdf',
     md: '.md,.markdown',
@@ -24,7 +25,11 @@ const localFileAccept = computed(() => {
     docx: '.doc,.docx',
     xlsx: '.xls,.xlsx'
   }
-  return m[k] || '.pdf,.md,.txt,.doc,.docx,.xls,.xlsx'
+  if (Array.isArray(kinds)) {
+    const exts = kinds.map(k => m[k]).filter(Boolean).join(',')
+    return exts || '.pdf,.md,.txt,.doc,.docx,.xls,.xlsx'
+  }
+  return m[kinds] || '.pdf,.md,.txt,.doc,.docx,.xls,.xlsx'
 })
 
 function kindLabelZh(kind) {
@@ -34,6 +39,9 @@ function kindLabelZh(kind) {
     txt: 'TXT',
     docx: 'Word',
     xlsx: 'Excel'
+  }
+  if (Array.isArray(kind)) {
+    return kind.map(k => map[k] || k).join(' / ')
   }
   return map[kind] || kind
 }
@@ -181,8 +189,10 @@ async function loadDocsForSpace(spaceId) {
   isLoadingLibrary.value = true
   try {
     await libraryStore.loadDocs(spaceId)
+    const kinds = workflowStore.workflowInputFileKinds
+    const kindList = Array.isArray(kinds) ? kinds : (kinds ? [kinds] : [])
     workflowStore.setSelectedDocs(
-      libraryStore.currentDocs.filter(d => workflowFileMatchesKind(d.name, workflowStore.workflowInputFileKind))
+      libraryStore.currentDocs.filter(d => kindList.some(k => workflowFileMatchesKind(d.name, k)))
     )
   } finally {
     isLoadingLibrary.value = false
@@ -203,8 +213,9 @@ function handleDocToggle(docId) {
 // ==================== 本地上传 ====================
 function handleFileSelect(event) {
   const files = Array.from(event.target.files || [])
-  const kind = workflowStore.workflowInputFileKind
-  const matched = files.filter(f => workflowFileMatchesKind(f.name, kind))
+  const kinds = workflowStore.workflowInputFileKinds
+  const kindList = Array.isArray(kinds) ? kinds : (kinds ? [kinds] : [])
+  const matched = files.filter(f => kindList.some(k => workflowFileMatchesKind(f.name, k)))
   if (matched.length > 0) {
     workflowStore.addLocalFiles(matched)
   }
@@ -217,8 +228,9 @@ function handleFileSelect(event) {
 function handleDrop(event) {
   event.preventDefault()
   const files = Array.from(event.dataTransfer?.files || [])
-  const kind = workflowStore.workflowInputFileKind
-  const allowed = files.filter(f => workflowFileMatchesKind(f.name, kind))
+  const kinds = workflowStore.workflowInputFileKinds
+  const kindList = Array.isArray(kinds) ? kinds : (kinds ? [kinds] : [])
+  const allowed = files.filter(f => kindList.some(k => workflowFileMatchesKind(f.name, k)))
   if (allowed.length > 0) {
     workflowStore.addLocalFiles(allowed)
   }
@@ -226,6 +238,33 @@ function handleDrop(event) {
 
 function handleDragOver(event) {
   event.preventDefault()
+}
+
+// 通过 Electron 文件资源管理器选文件
+async function handleElectronFilePick() {
+  const kinds = workflowStore.workflowInputFileKinds
+  const filterMap = {
+    pdf:  { name: 'PDF 文件',  extensions: ['pdf'] },
+    md:   { name: 'Markdown',  extensions: ['md', 'markdown'] },
+    txt:  { name: '文本文件',  extensions: ['txt'] },
+    docx: { name: 'Word 文档', extensions: ['doc', 'docx'] },
+    xlsx: { name: 'Excel 表格', extensions: ['xls', 'xlsx'] },
+  }
+  const kindList = Array.isArray(kinds) ? kinds : (kinds ? [kinds] : [])
+  const exts = [...new Set(kindList.flatMap(k => filterMap[k]?.extensions || []))]
+  const filters = exts.length > 0
+    ? [{ name: '支持的文件', extensions: exts }, { name: '所有文件', extensions: ['*'] }]
+    : [{ name: '所有文件', extensions: ['*'] }]
+
+  const filePaths = await pickOpenFiles({ title: '选择待处理文件', filters })
+  if (!filePaths || filePaths.length === 0) return
+
+  // 将路径转为 File-like 对象供 addLocalFiles 使用
+  const pseudoFiles = filePaths.map(fp => {
+    const name = fp.split(/[\\/]/).pop() || fp
+    return { name, path: fp, size: 0, _fromElectron: true }
+  })
+  workflowStore.addLocalFiles(pseudoFiles)
 }
 
 // ==================== 语言/格式选择 ====================
@@ -663,7 +702,7 @@ function nodeStatusText(status) {
           </div>
 
           <p class="doc-source-format-hint" style="margin-bottom: 8px;">
-            输入仅来自文档库；请在「参数配置」中选择输入文档库并勾选文件。
+            可从文档库勾选，也可点击下方按钮直接从本地选择文件。
           </p>
 
           <div class="doc-library-section">
@@ -703,7 +742,17 @@ function nodeStatusText(status) {
           </div>
 
           <!-- 本地上传区域 -->
-          <div v-if="false" class="doc-local-section">
+          <div class="doc-local-section">
+            <!-- Electron：打开文件资源管理器 -->
+            <button
+              v-if="isElectronShell()"
+              class="config-btn"
+              style="margin-bottom: 10px; width: 100%;"
+              @click="handleElectronFilePick"
+            >
+              📂 打开文件资源管理器
+            </button>
+
             <div
               class="upload-zone"
               @click="fileInputRef?.click()"
@@ -816,6 +865,12 @@ function nodeStatusText(status) {
             <span class="output-file-size">{{ (f.size / 1024).toFixed(1) }} KB</span>
             <button class="output-download-btn" @click="downloadFile(f)">下载</button>
           </div>
+        </div>
+
+        <!-- Result Content Preview (数据抽取/实体提取无输出节点时) -->
+        <div v-if="workflowStore.executionResultContent && !workflowStore.isExecuting" class="result-content-section">
+          <div class="output-files-title">抽取结果</div>
+          <pre class="result-content-pre">{{ workflowStore.executionResultContent }}</pre>
         </div>
       </div>
 
@@ -1505,6 +1560,28 @@ function nodeStatusText(status) {
 
 .output-download-btn:hover {
   opacity: 0.85;
+}
+
+.result-content-section {
+  margin-top: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--bg-secondary, #1a1a2e);
+}
+
+.result-content-pre {
+  font-size: 11px;
+  color: var(--text-primary, #e0e0e0);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 300px;
+  overflow-y: auto;
+  margin: 8px 0 0;
+  line-height: 1.5;
+  background: var(--bg-tertiary, #12121f);
+  padding: 8px;
+  border-radius: 6px;
 }
 
 .exec-log-item {

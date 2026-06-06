@@ -15,6 +15,11 @@
       "model": "gpt-4o-mini",
       "base_url": "",
       "api_key": ""
+    },
+    "mimo": {
+      "model": "mimo-v2.5",
+      "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+      "api_key": ""
     }
   }
 }

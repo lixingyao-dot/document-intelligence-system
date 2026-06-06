@@ -760,6 +760,17 @@ function registerWindowIpc() {
     if (result.canceled || !result.filePaths?.length) return null
     return result.filePaths[0]
   })
+  ipcMain.handle('dialog:pickOpenFiles', async (_event, opts) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return []
+    const filters = opts?.filters || [{ name: '所有文件', extensions: ['*'] }]
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: opts?.title || '选择文件',
+      properties: ['openFile', 'multiSelections'],
+      filters,
+    })
+    if (result.canceled || !result.filePaths?.length) return []
+    return result.filePaths
+  })
   ipcMain.handle('dialog:saveFileFromBuffer', async (_event, payload) => {
     if (!mainWindow || mainWindow.isDestroyed()) {
       return { ok: false, canceled: true, error: 'window_unavailable' }

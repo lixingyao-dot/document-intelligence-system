@@ -146,6 +146,8 @@ class LLMService:
         """获取 API Key"""
         return (
             self.config.api_key
+            or os.getenv("MIMO_API_KEY")
+            or os.getenv("ZHIPU_API_KEY")
             or os.getenv("DEEPSEEK_API_KEY")
             or os.getenv("OPENAI_API_KEY")
             or ""
@@ -159,6 +161,8 @@ class LLMService:
         provider = self.config.provider.lower()
         if provider == "deepseek":
             return "https://api.deepseek.com/v1"
+        elif provider == "mimo":
+            return os.getenv("MIMO_BASE_URL", "https://token-plan-cn.xiaomimimo.com/v1")
         elif provider == "openai":
             return "https://api.openai.com/v1"
         elif provider == "anthropic":
@@ -175,6 +179,9 @@ class LLMService:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         strip_markdown_output: bool = True,
+        streaming: Optional[bool] = None,
+        request_timeout: Optional[float] = None,
+        max_retries: Optional[int] = None,
     ) -> str:
         """
         发起聊天请求
@@ -196,20 +203,35 @@ class LLMService:
         # 转换消息格式
         langchain_messages = self._convert_messages(messages)
 
-        # 创建临时客户端（如果参数不同）
-        if model or temperature is not None or max_tokens:
+        use_streaming = self.config.streaming if streaming is None else streaming
+        client_overrides: Dict[str, Any] = {}
+        if streaming is not None:
+            client_overrides["streaming"] = streaming
+        if request_timeout is not None:
+            client_overrides["request_timeout"] = request_timeout
+        if max_retries is not None:
+            client_overrides["max_retries"] = max_retries
+
+        need_custom_client = bool(
+            model
+            or temperature is not None
+            or max_tokens
+            or client_overrides
+        )
+        if need_custom_client:
             client = ChatOpenAI(
                 **self._chat_openai_kwargs(
                     model=model or self.config.model,
                     temperature=temperature if temperature is not None else self.config.temperature,
                     max_tokens=max_tokens or self.config.max_tokens,
+                    **client_overrides,
                 )
             )
         else:
             client = self._get_client()
 
         # 根据配置选择流式或普通调用
-        if self.config.streaming:
+        if use_streaming:
             callback = MarkdownFilterCallback() if strip_markdown_output else None
             return self._stream_invoke(
                 client, langchain_messages, callback, strip_markdown_output=strip_markdown_output
@@ -244,6 +266,9 @@ class LLMService:
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        streaming: Optional[bool] = None,
+        request_timeout: Optional[float] = None,
+        max_retries: Optional[int] = None,
     ) -> str:
         """
         便捷方法：使用系统提示词和用户输入发起聊天
@@ -266,7 +291,15 @@ class LLMService:
 
         messages.append({"role": "user", "content": user_input})
 
-        return self.chat(messages, model, temperature, max_tokens)
+        return self.chat(
+            messages,
+            model,
+            temperature,
+            max_tokens,
+            streaming=streaming,
+            request_timeout=request_timeout,
+            max_retries=max_retries,
+        )
 
     def _stream_invoke(
         self,

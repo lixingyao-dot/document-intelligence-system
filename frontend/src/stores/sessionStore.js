@@ -1048,11 +1048,12 @@ export const useSessionStore = defineStore('session', () => {
           showProgressBar.value = true
           progressValue.value = 0
           progressMessage.value = data.result_type === 'table_filling' || data.mode === 'table_filling'
-            ? '正在将数据填入模板...'
+            ? '正在将数据填入模板…'
             : '开始提取...'
         }
       } else if (data.type === 'progress') {
         console.log('[WebSocket onmessage] type=progress:', data.progress, data.message)
+        showProgressBar.value = true
         progressValue.value = data.progress
         progressMessage.value = data.message
       } else if (data.type === 'chunk') {
@@ -1529,6 +1530,7 @@ export const useSessionStore = defineStore('session', () => {
         }
       }
 
+      clearAllSelectedFiles()
       await sendToBackend(sessionId, content.trim(), effectiveMode, allFiles, allTemplateFiles)
     } catch (e) {
       console.error('[sendMessage] 发送失败:', e)
@@ -1730,22 +1732,37 @@ export const useSessionStore = defineStore('session', () => {
       return
     }
 
-    const result = await new Promise((resolve) => {
-      pendingResolve = resolve
-      try {
-        ws.value.send(
-          JSON.stringify({
-            content: expandTableFillPrompt(content),
-            mode: 'table_filling',
-            files: dataFiles.map((f) => ({ ...f, is_selected: true })),
-            template_files: template_files || [],
-          }),
-        )
-      } catch (e) {
-        pendingResolve = null
-        resolve({ success: false, error: e.message })
-      }
-    })
+    const TABLE_FILL_TIMEOUT_MS = 300_000
+    const result = await Promise.race([
+      new Promise((resolve) => {
+        pendingResolve = resolve
+        try {
+          ws.value.send(
+            JSON.stringify({
+              content: expandTableFillPrompt(content),
+              mode: 'table_filling',
+              files: dataFiles.map((f) => ({ ...f, is_selected: true })),
+              template_files: template_files || [],
+            }),
+          )
+        } catch (e) {
+          pendingResolve = null
+          resolve({ success: false, error: e.message })
+        }
+      }),
+      new Promise((resolve) => {
+        setTimeout(() => {
+          if (pendingResolve) {
+            pendingResolve = null
+            pendingResultData = null
+            resolve({
+              success: false,
+              error: '填表超时（超过 5 分钟），请检查网络或 LLM 配置后重试',
+            })
+          }
+        }, TABLE_FILL_TIMEOUT_MS)
+      }),
+    ])
 
     const taskGeneratedFiles = normalizeGeneratedFiles(result?.generated_files)
     if (taskGeneratedFiles.length > 0) {
@@ -1982,7 +1999,15 @@ export const useSessionStore = defineStore('session', () => {
                   }
                 }
                 const tplName = selectedTemplate?.file_name || '模板'
-                progressMsg.content = `填表完成：已从「${taskList[0].file?.file_name || '文档'}」提取 ${entities.length} 条并写入模板「${tplName}」`
+                const extractSrc =
+                  r0?.resp?.extractionData?.extract_source || r0?.resp?.extract_source || ''
+                const srcHint =
+                  extractSrc === 'llm'
+                    ? '（大模型提取）'
+                    : String(extractSrc).startsWith('rule')
+                      ? '（规则兜底）'
+                      : ''
+                progressMsg.content = `填表完成${srcHint}：已从「${taskList[0].file?.file_name || '文档'}」提取 ${entities.length} 条并写入模板「${tplName}」`
               }
             } catch (e) {
               console.error('[混合模式] 单文件 mixed-fill 失败:', e)

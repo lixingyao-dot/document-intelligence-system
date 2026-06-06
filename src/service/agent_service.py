@@ -330,6 +330,8 @@ class AgentService:
                     "schema": inner_data.get("schema") if isinstance(inner_data, dict) else {},
                     "chunk_count": inner_data.get("chunk_count") if isinstance(inner_data, dict) else 0,
                     "total_extractions": inner_data.get("total_extractions") if isinstance(inner_data, dict) else 0,
+                    "extract_source": inner_data.get("extract_source") if isinstance(inner_data, dict) else "",
+                    "hints": inner_data.get("hints") if isinstance(inner_data, dict) else "",
                 }
                 yield json.dumps(response_data, ensure_ascii=False)
                 return

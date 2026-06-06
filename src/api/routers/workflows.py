@@ -128,8 +128,8 @@ class ExecuteRequest(BaseModel):
     workflowId: str = Field(..., description="工作流 ID")
     nodes: List[WorkflowNode] = Field(default_factory=list, description="工作流节点配置")
     docs: List[str] = Field(default_factory=list, description="文档库文档 ID 列表")
-    localFiles: List[Dict[str, Any]] = Field(
-        default_factory=list, description="本地上传文件 [{name, size, content(base64)}]"
+    localFiles: List[Any] = Field(
+        default_factory=list, description="本地上传文件：路径字符串（绝对路径）或 {name, size, content(base64)} 对象"
     )
     sessionId: Optional[str] = Field(None, description="会话 ID（可选）")
 
@@ -430,7 +430,7 @@ def _run_execution_sync(execution_id: str, params: ExecuteRequest):
     try:
         output_config = _get_output_config(params.nodes)
         output_mode = _normalize_output_mode(output_config.get("outputMode"))
-        output_format = output_config.get("outputFormat", "md")
+        output_format = output_config.get("outputFormat", "pdf")
         target_space_id = output_config.get("targetSpaceId")
         save_path = str(output_config.get("savePath") or "").strip()
         naming_rule = output_config.get("namingRule", "{original_name}_out")
@@ -439,22 +439,14 @@ def _run_execution_sync(execution_id: str, params: ExecuteRequest):
         translation_config = _get_translation_config(params.nodes)
         target_language = _normalize_lang(translation_config.get("targetLanguage", "中文"))
 
-        if not params.docs:
+        if not params.docs and not params.localFiles:
             state["status"] = "failed"
-            state["error"] = "请从文档库选择至少一个输入文档"
+            state["error"] = "请至少选择一个输入文档（文档库或本地文件）"
             state["error_code"] = "VALIDATION_ERROR"
-            state["logs"].append({"type": "error", "message": "工作流输入仅支持文档库，请在「文档输入」节点勾选文档"})
+            state["logs"].append({"type": "error", "message": "请至少选择一个输入文档（文档库或本地文件）"})
             state["updated_at"] = datetime.now(timezone.utc).isoformat()
             _persist_execution_states(config)
             return
-
-        if params.localFiles:
-            state["logs"].append(
-                {
-                    "type": "warn",
-                    "message": f"已忽略 {len(params.localFiles)} 个本地上传文件；工作流仅支持从文档库读取输入。",
-                }
-            )
 
         if output_mode == "library" and not target_space_id:
             state["status"] = "failed"
@@ -505,6 +497,19 @@ def _run_execution_sync(execution_id: str, params: ExecuteRequest):
             else:
                 unresolved_doc_ids.append(doc_id)
                 state["logs"].append({"type": "warn", "message": f"文档路径未找到: {doc_id}"})
+
+        # 从本地文件路径（Electron 文件资源管理器选入）
+        for lf in (params.localFiles or []):
+            lp = lf if isinstance(lf, str) else (lf.get("path") or lf.get("name") or "")
+            lp = str(lp).strip()
+            if not lp:
+                continue
+            p = Path(lp)
+            if p.is_file():
+                ft = _detect_file_type(p.name)
+                source_files.append(FileInfo(path=str(p), file_type=ft, name=p.name))
+            else:
+                state["logs"].append({"type": "warn", "message": f"本地文件不存在: {lp}"})
 
         if not source_files:
             state["status"] = "failed"
@@ -580,15 +585,41 @@ def _run_execution_sync(execution_id: str, params: ExecuteRequest):
                 continue
 
             out_item = {}
+            result_content = None
             if isinstance(wf_result.data, dict):
                 out_item = wf_result.data.get("output", {}) or {}
-            if not out_item:
+                result_content = wf_result.data.get("result_content")
+
+            if not out_item and not result_content:
                 failed_count += 1
                 failure_messages.append(f"无输出产物: {file_info.name}")
                 state["logs"].append({"type": "warn", "message": f"  无输出产物: {file_info.name}"})
                 continue
 
-            all_output_files.append(out_item)
+            # 收集中间节点文件
+            if isinstance(wf_result.data, dict):
+                for inter in (wf_result.data.get("intermediate_files") or []):
+                    inter["outputMode"] = "external"
+                    all_output_files.append(inter)
+
+            # 有输出文件时正常追加；无输出节点时把结果内容也作为可下载文件追加
+            if out_item:
+                all_output_files.append(out_item)
+            elif result_content:
+                # 无输出节点场景（数据抽取/实体提取），将结果内容作为文件
+                import tempfile
+                res_stem = Path(file_info.name).stem
+                res_name = f"{res_stem}_result.txt"
+                res_path = Path(config.output_dir) / res_name
+                res_path.parent.mkdir(parents=True, exist_ok=True)
+                res_path.write_text(result_content, encoding="utf-8")
+                all_output_files.append({
+                    "name": res_name,
+                    "path": str(res_path),
+                    "size": res_path.stat().st_size,
+                    "source": file_info.name,
+                    "outputMode": "external",
+                })
             out_path = out_item.get("path")
             out_name = out_item.get("name", file_info.name)
             if output_mode == "external":

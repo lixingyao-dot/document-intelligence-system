@@ -64,6 +64,44 @@ export const useWorkflowStore = defineStore('workflow', () => {
   const availableModels = ref([])
   const availableLanguages = ref([])
   const outputFormats = ref([])
+  const autoSaveStatus = ref('idle') // idle | pending | saving | saved | error
+
+  let autoSaveTimer = null
+  let isHydratingWorkflow = false
+  let saveGeneration = 0
+
+  function scheduleAutoSave() {
+    if (isHydratingWorkflow || !currentWorkflowId.value) return
+    autoSaveStatus.value = 'pending'
+    if (autoSaveTimer) clearTimeout(autoSaveTimer)
+    autoSaveTimer = setTimeout(() => {
+      autoSaveTimer = null
+      flushPendingSave()
+    }, 600)
+  }
+
+  async function flushPendingSave() {
+    if (autoSaveTimer) {
+      clearTimeout(autoSaveTimer)
+      autoSaveTimer = null
+    }
+    if (!currentWorkflowId.value) return
+    const gen = ++saveGeneration
+    autoSaveStatus.value = 'saving'
+    try {
+      await persistCurrentWorkflow()
+      if (gen === saveGeneration) {
+        autoSaveStatus.value = 'saved'
+        setTimeout(() => {
+          if (autoSaveStatus.value === 'saved') autoSaveStatus.value = 'idle'
+        }, 2000)
+      }
+    } catch (e) {
+      console.error('autoSave error:', e)
+      if (gen === saveGeneration) autoSaveStatus.value = 'error'
+    }
+  }
+
   // ==================== 节点 Schema（无硬编码值，所有选项由 API 决定） ====================
 
   const nodeSchemas = ref({
@@ -71,17 +109,19 @@ export const useWorkflowStore = defineStore('workflow', () => {
       icon: '', iconClass: 'input',
       title: '文档输入', subtitle: '统一输入',
       fields: [
-        { key: '_hint_in', type: 'static', text: '请先选择源文件格式，并从文档库勾选待处理文档（上传请至左侧「文档库」页）。' },
-        { key: 'inputFileKind', label: '源文件格式', type: 'select',
+        { key: '_hint_in', type: 'static', text: '选择支持的文件格式（可多选），然后从文档库勾选或上传待处理文档。' },
+        { key: 'inputFileKinds', label: '支持的文件格式', type: 'select-multiple',
           options: [
             { value: 'pdf', label: 'PDF (.pdf)' },
             { value: 'md', label: 'Markdown (.md)' },
             { value: 'txt', label: '纯文本 (.txt)' },
             { value: 'docx', label: 'Word (.docx / .doc)' },
             { value: 'xlsx', label: 'Excel (.xlsx / .xls)' }
-          ] },
+          ],
+          defaultValue: ['pdf', 'txt', 'md', 'docx', 'xlsx']
+        },
         { key: 'spaceId', label: '输入文档库', type: 'library-selector' },
-        { key: 'skipExisting', label: '跳过已处理文档（有同名输出则跳过）', type: 'toggle', dependsOn: { field: 'inputFileKind', value: 'pdf' } }
+        { key: 'skipExisting', label: '跳过已处理文档（有同名输出则跳过）', type: 'toggle' }
       ]
     },
     'schema-translate': {
@@ -322,6 +362,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       x: 30,
       y: 160,
       configValues: {
+        inputFileKinds: ['pdf', 'txt', 'md', 'docx', 'xlsx'],
         inputFileKind: 'pdf',
         inputSource: 'library',
         spaceId: null,
@@ -418,6 +459,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       schemaKey: SCHEMA_DOCUMENT_INPUT,
       schema: nodeSchemas.value[SCHEMA_DOCUMENT_INPUT],
       configValues: {
+        inputFileKinds: cv.inputFileKinds || (kind ? [kind] : ['pdf', 'txt', 'md', 'docx', 'xlsx']),
         inputFileKind: kind,
         inputSource: cv.inputSource || 'library',
         spaceId: cv.spaceId ?? null,
@@ -492,17 +534,26 @@ export const useWorkflowStore = defineStore('workflow', () => {
     _applyDefaultOutputSpaceToNode(outNode)
   }
 
-  /** 首个输入节点的源格式（用于文件校验） */
-  const workflowInputFileKind = computed(() => {
+  /** 输入节点支持的文件格式列表（兼容旧的 inputFileKind 单值） */
+  const workflowInputFileKinds = computed(() => {
     const n = canvasNodes.value.find(x => x.type === 'input')
-    const k = n?.configValues?.inputFileKind
-    return typeof k === 'string' && k ? k : 'pdf'
+    const cv = n?.configValues || {}
+    if (Array.isArray(cv.inputFileKinds) && cv.inputFileKinds.length > 0) {
+      return cv.inputFileKinds
+    }
+    if (typeof cv.inputFileKind === 'string' && cv.inputFileKind) {
+      return [cv.inputFileKind]
+    }
+    // 默认支持全部格式
+    return ['pdf', 'txt', 'md', 'docx', 'xlsx']
   })
 
-  /** 清空与当前源格式不匹配的选择 */
-  function pruneFilesForWorkflowKind(kind) {
-    selectedDocs.value = selectedDocs.value.filter(d => workflowFileMatchesKind(d.name, kind))
-    localFiles.value = localFiles.value.filter(f => workflowFileMatchesKind(f.name, kind))
+  /** 清空与当前支持格式不匹配的选择 */
+  function pruneFilesForWorkflowKind() {
+    const kinds = workflowInputFileKinds.value
+    const matches = (name) => kinds.some(k => workflowFileMatchesKind(name, k))
+    selectedDocs.value = selectedDocs.value.filter(d => matches(d.name))
+    localFiles.value = localFiles.value.filter(f => matches(f.name))
   }
 
   // ==================== 执行状态 ====================
@@ -519,6 +570,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
   const executionCurrentFileIndex = ref(0)
   const executionTotalFiles = ref(0)
   const executionCurrentFileName = ref('')
+  /** 无输出节点时的结果内容（数据抽取/实体提取等直接展示） */
+  const executionResultContent = ref('')
 
   // ==================== 计算属性 ====================
 
@@ -605,6 +658,13 @@ export const useWorkflowStore = defineStore('workflow', () => {
   // ==================== 工作流操作 ====================
 
   function selectWorkflow(workflowId) {
+    isHydratingWorkflow = true
+    if (autoSaveTimer) {
+      clearTimeout(autoSaveTimer)
+      autoSaveTimer = null
+    }
+    autoSaveStatus.value = 'idle'
+
     currentWorkflowId.value = workflowId
     const wf = workflows.value[workflowId]
 
@@ -612,6 +672,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       workflowName.value = '未命名'
       canvasNodes.value = []
       selectedNodeId.value = null
+      isHydratingWorkflow = false
       return
     }
 
@@ -623,6 +684,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
     }).catch(() => {
       workflowName.value = wf.name || '未命名'
       canvasNodes.value = []
+    }).finally(() => {
+      isHydratingWorkflow = false
     })
   }
 
@@ -658,24 +721,43 @@ export const useWorkflowStore = defineStore('workflow', () => {
     }
   }
 
-  async function saveCurrentWorkflow() {
+  async function persistCurrentWorkflow() {
     if (!currentWorkflowId.value) return
     const wf = workflows.value[currentWorkflowId.value]
     if (!wf) return
+    wf.name = workflowName.value || wf.name
     // 节点要保存完整配置：id, type, title, icon, body, schemaKey, configValues
     wf.nodes = canvasNodes.value.map(({ x, y, schema, ...rest }) => rest)
+    await workflowApi.saveWorkflow({
+      id: wf.id,
+      name: wf.name,
+      icon: wf.icon || '',
+      type: 'custom',
+      nodes: wf.nodes,
+      config: wf.config || {},
+    })
+    wf.time = '刚刚'
+  }
+
+  async function saveCurrentWorkflow() {
+    if (autoSaveTimer) {
+      clearTimeout(autoSaveTimer)
+      autoSaveTimer = null
+    }
+    const gen = ++saveGeneration
+    autoSaveStatus.value = 'saving'
     try {
-      await workflowApi.saveWorkflow({
-        id: wf.id,
-        name: wf.name,
-        icon: wf.icon || '',
-        type: 'custom',
-        nodes: wf.nodes,
-        config: wf.config || {},
-      })
-      wf.time = '刚刚'
+      await persistCurrentWorkflow()
+      if (gen === saveGeneration) {
+        autoSaveStatus.value = 'saved'
+        setTimeout(() => {
+          if (autoSaveStatus.value === 'saved') autoSaveStatus.value = 'idle'
+        }, 2000)
+      }
     } catch (e) {
       console.error('saveCurrentWorkflow error:', e)
+      if (gen === saveGeneration) autoSaveStatus.value = 'error'
+      throw e
     }
   }
 
@@ -722,6 +804,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     list.splice(idx, 1)
     list.splice(idx - 1, 0, item)
     applyHorizontalPipelineLayout(list)
+    scheduleAutoSave()
   }
 
   /** 执行顺序后移一格；首尾输入/输出不可移动，移动后整条流水线重新水平居中 */
@@ -735,6 +818,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     list.splice(idx, 1)
     list.splice(idx + 1, 0, item)
     applyHorizontalPipelineLayout(list)
+    scheduleAutoSave()
   }
 
   function updateNodeConfig(nodeId, key, value) {
@@ -743,8 +827,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
       if (!node.configValues) node.configValues = {}
       node.configValues[key] = value
 
-      if (key === 'inputFileKind' && typeof value === 'string') {
-        pruneFilesForWorkflowKind(value)
+      if (key === 'inputFileKinds' || key === 'inputFileKind') {
+        pruneFilesForWorkflowKind()
       }
 
       // 特殊处理：inputSource 变化时清空对应数据
@@ -756,6 +840,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
           selectedDocs.value = []
         }
       }
+      scheduleAutoSave()
     }
   }
 
@@ -785,6 +870,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     canvasNodes.value.splice(insertAt, 0, newNode)
     applyHorizontalPipelineLayout(canvasNodes.value)
     selectedNodeId.value = id
+    scheduleAutoSave()
     return id
   }
 
@@ -835,6 +921,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     canvasNodes.value.splice(insertAt, 0, newNode)
     applyHorizontalPipelineLayout(canvasNodes.value)
     selectedNodeId.value = id
+    scheduleAutoSave()
     return id
   }
 
@@ -865,11 +952,13 @@ export const useWorkflowStore = defineStore('workflow', () => {
         ? canvasNodes.value[Math.min(idx, canvasNodes.value.length - 1)].id
         : null
     }
+    scheduleAutoSave()
   }
 
   function clearCanvas() {
     canvasNodes.value = normalizeCanvasImportedNodes([])
     selectedNodeId.value = null
+    scheduleAutoSave()
   }
 
   // ==================== 文档操作（从文档库） ====================
@@ -1001,6 +1090,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     executionCurrentFileIndex.value = 0
     executionTotalFiles.value = 0
     executionCurrentFileName.value = ''
+    executionResultContent.value = ''
     nodeProgress.value = canvasNodes.value.map((n, idx) => ({
       id: n.id,
       title: n.title,
@@ -1032,28 +1122,29 @@ export const useWorkflowStore = defineStore('workflow', () => {
         executionStatus.value = 'failed'
         return
       }
-      const fk = workflowInputFileKind.value
-      const mismatchedLib = selectedDocs.value.filter(d => !workflowFileMatchesKind(d.name, fk))
+      const fks = workflowInputFileKinds.value
+      const matchesAny = (name) => fks.some(k => workflowFileMatchesKind(name, k))
+      const mismatchedLib = selectedDocs.value.filter(d => !matchesAny(d.name))
       if (mismatchedLib.length) {
         executionLogs.value.push({
           type: 'error',
-          message: `以下文档与当前源格式（${fk}）不匹配：${mismatchedLib.map(d => d.name).join('、')}`
+          message: `以下文档格式不支持：${mismatchedLib.map(d => d.name).join('、')}`
         })
         executionStatus.value = 'failed'
         return
       }
-      const mismatchedLoc = localFiles.value.filter(f => !workflowFileMatchesKind(f.name, fk))
+      const mismatchedLoc = localFiles.value.filter(f => !matchesAny(f.name))
       if (mismatchedLoc.length) {
         executionLogs.value.push({
           type: 'error',
-          message: `以下本地文件与当前源格式（${fk}）不匹配：${mismatchedLoc.map(f => f.name).join('、')}`
+          message: `以下本地文件格式不支持：${mismatchedLoc.map(f => f.name).join('、')}`
         })
         executionStatus.value = 'failed'
         return
       }
 
-      if (selectedDocs.value.length === 0) {
-        executionLogs.value.push({ type: 'error', message: '请从文档库选择至少一个输入文档' })
+      if (selectedDocs.value.length === 0 && localFiles.value.length === 0) {
+        executionLogs.value.push({ type: 'error', message: '请至少选择一个输入文档（文档库或本地文件）' })
         executionStatus.value = 'failed'
         return
       }
@@ -1072,6 +1163,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
         }
       }
 
+      await flushPendingSave()
+
       const params = {
         workflowId: currentWorkflowId.value,
         nodes: canvasNodes.value.map(n => ({
@@ -1082,7 +1175,9 @@ export const useWorkflowStore = defineStore('workflow', () => {
           configValues: _sanitizeNodeConfigValues(n.configValues)
         })),
         docs: selectedDocs.value.map(d => d.id),
-        localFiles: []
+        localFiles: localFiles.value
+          .filter(f => f.file?.path)
+          .map(f => f.file.path)
       }
 
       const res = await workflowApi.execute(params)
@@ -1162,6 +1257,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     if (wf) {
       wf.name = name
     }
+    scheduleAutoSave()
   }
 
   // 根据 schemaKey 获取 schema（用于配置面板动态渲染）
@@ -1203,6 +1299,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     availableModels,
     availableLanguages,
     outputFormats,
+    autoSaveStatus,
     isExecuting,
     executionProgress,
     executionLogs,
@@ -1214,11 +1311,12 @@ export const useWorkflowStore = defineStore('workflow', () => {
     executionCurrentFileIndex,
     executionTotalFiles,
     executionCurrentFileName,
+    executionResultContent,
     // 计算属性
     currentWorkflow,
     workflowList,
     totalDocCount,
-    workflowInputFileKind,
+    workflowInputFileKinds,
     // API 加载
     loadWorkflows,
     loadModels,
@@ -1228,6 +1326,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     selectWorkflow,
     createNewWorkflow,
     saveCurrentWorkflow,
+    flushPendingSave,
     deleteWorkflow,
     updateWorkflowName,
     // 节点操作

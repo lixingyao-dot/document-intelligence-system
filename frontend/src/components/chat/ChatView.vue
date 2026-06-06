@@ -132,15 +132,16 @@ function handleKeyDown(e) {
 
 async function sendMessage() {
   const text = inputText.value.trim()
-  if (!text) return
+  if (!text || sessionStore.isStreaming) return
 
-  await sessionStore.sendMessage(text, sessionStore.currentMode)
+  inputText.value = ''
   libraryPickerOpen.value = false
   attachSource.value = null
-  inputText.value = ''
   if (textareaRef.value) {
     textareaRef.value.style.height = 'auto'
   }
+
+  await sessionStore.sendMessage(text, sessionStore.currentMode)
 }
 
 async function onPickerSpaceChange(event) {
@@ -782,30 +783,9 @@ function userMessageAttachments(msg) {
                   还有 {{ msg.tableFillingPreview.previewData.length - 50 }} 行未展示，请下载生成文件查看全部
                 </div>
               </div>
-              <!-- 混合模式或非表格任务的文件下载：独立显示，不与 entitiesData 块冲突 -->
+              <!-- 仅文件下载：无 entitiesData 预览时单独展示 -->
               <div
-                v-if="msg.generated_files?.length && !getTableFillingData(msg) && msg.entitiesData?.length"
-                class="entity-preview table-fill-preview table-fill-downloads-only"
-              >
-                <div class="entity-preview-header">
-                  <span class="entity-preview-title">表格数据下载</span>
-                  <div class="entity-preview-actions">
-                    <div
-                      v-for="f in msg.generated_files"
-                      :key="f.file_id"
-                      class="entity-download-item"
-                    >
-                      <span class="entity-download-name" :title="f.file_name">{{ f.file_name }}</span>
-                      <button type="button" class="entity-action-btn" @click="saveGeneratedResultFile(f)">
-                        {{ saveFileButtonLabel(f) }}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <!-- 仅文件下载：实体提取等场景；表格填表已在上方标题栏处理，勿与 msg.generated_files 再渲一排 -->
-              <div
-                v-else-if="msg.generated_files?.length && !getTableFillingData(msg)"
+                v-if="msg.generated_files?.length && !getTableFillingData(msg) && !msg.entitiesData?.length"
                 class="entity-preview table-fill-preview table-fill-downloads-only"
               >
                 <div class="entity-preview-header">

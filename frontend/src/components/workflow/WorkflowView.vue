@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { Save } from 'lucide-vue-next'
 import WorkflowSidebar from './WorkflowSidebar.vue'
 import WorkflowCanvas from './WorkflowCanvas.vue'
@@ -10,15 +10,32 @@ import { useWorkflowStore } from '../../stores/workflowStore'
 const workflowStore = useWorkflowStore()
 const leftCollapsed = ref(false)
 const rightCollapsed = ref(false)
-const isSaving = ref(false)
+
+const autoSaveLabel = computed(() => {
+  switch (workflowStore.autoSaveStatus) {
+    case 'pending':
+      return '等待保存…'
+    case 'saving':
+      return '保存中…'
+    case 'saved':
+      return '已自动保存'
+    case 'error':
+      return '保存失败'
+    default:
+      return '修改后自动保存'
+  }
+})
+
+const isSaving = computed(() =>
+  workflowStore.autoSaveStatus === 'saving' || workflowStore.autoSaveStatus === 'pending'
+)
 
 async function handleSaveWorkflow() {
   if (isSaving.value || !workflowStore.currentWorkflowId) return
-  isSaving.value = true
   try {
     await workflowStore.saveCurrentWorkflow()
-  } finally {
-    isSaving.value = false
+  } catch {
+    /* 状态由 store 维护 */
   }
 }
 </script>
@@ -41,7 +58,18 @@ async function handleSaveWorkflow() {
       </div>
       <div class="topbar-right">
         <span class="topbar-meta">{{ workflowStore.canvasNodes.length }} 个节点</span>
+        <span
+          class="topbar-autosave"
+          :class="{
+            saving: workflowStore.autoSaveStatus === 'saving' || workflowStore.autoSaveStatus === 'pending',
+            saved: workflowStore.autoSaveStatus === 'saved',
+            error: workflowStore.autoSaveStatus === 'error',
+          }"
+        >
+          {{ autoSaveLabel }}
+        </span>
         <button
+          v-if="workflowStore.autoSaveStatus === 'error'"
           type="button"
           class="topbar-save-btn"
           :class="{ saving: isSaving }"
@@ -50,7 +78,7 @@ async function handleSaveWorkflow() {
         >
           <Save v-if="!isSaving" :size="15" :stroke-width="2" aria-hidden="true" />
           <span v-if="isSaving" class="save-spinner" aria-hidden="true"></span>
-          <span>{{ isSaving ? '保存中...' : '保存工作流' }}</span>
+          <span>{{ isSaving ? '保存中...' : '重试保存' }}</span>
         </button>
       </div>
     </div>
@@ -156,6 +184,24 @@ async function handleSaveWorkflow() {
 .topbar-meta {
   font-size: 12px;
   color: var(--text-muted);
+}
+
+.topbar-autosave {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.topbar-autosave.saving {
+  color: var(--text-secondary);
+}
+
+.topbar-autosave.saved {
+  color: #34d399;
+}
+
+.topbar-autosave.error {
+  color: #f87171;
 }
 
 .topbar-save-btn {

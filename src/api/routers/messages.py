@@ -276,6 +276,42 @@ def _ensure_files_in_db(files: List[Dict[str, Any]], session_id: str, cfg, user_
     return result
 
 
+_TABLE_FILL_PROGRESS_TICKS = (
+    (15, "正在读取数据源与模板…"),
+    (35, "正在理解筛选条件…"),
+    (55, "正在筛选匹配数据…"),
+    (75, "正在写入模板…"),
+)
+
+
+async def _run_in_thread_with_progress(
+    session_id: str,
+    manager: "ConnectionManager",
+    fn,
+    *args,
+    **kwargs,
+):
+    """后台线程执行任务，主协程周期性推送进度，避免界面卡在单条文案。"""
+    loop = asyncio.get_running_loop()
+    task = loop.run_in_executor(None, lambda: fn(*args, **kwargs))
+    tick = 0
+    last_idx = -1
+    while not task.done():
+        idx = min(len(_TABLE_FILL_PROGRESS_TICKS) - 1, tick)
+        if idx != last_idx:
+            pct, msg = _TABLE_FILL_PROGRESS_TICKS[idx]
+            await manager.send_json(
+                session_id,
+                {"type": "progress", "progress": pct, "message": msg},
+            )
+            last_idx = idx
+        await asyncio.sleep(2.5)
+        tick += 1
+        if tick > 120:
+            break
+    return await task
+
+
 def _flatten_table_filling_response(response: Dict[str, Any]) -> Dict[str, Any]:
     """Convert run_agent_c_api result into the legacy frontend-friendly shape."""
 
@@ -1265,18 +1301,55 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                         user_meta["template_files"] = template_files
                     add_message(session_id, "user", user_content, user_meta, config=cfg, user_id=current_user.id if current_user else None)
                     print(f"[WS] 发送 table_filling start type=start mode={mode}")
-                    await manager.send_json(session_id, {"type": "start", "mode": mode})
-                    print(f"[WS] 调用 run_agent_c_api...")
-                    response = await asyncio.to_thread(
-                        run_agent_c_api,
-                        src=_resolve_file_reference(source_file, cfg, session_id, "source"),
-                        prompt=user_content,
-                        template=_resolve_file_reference(template_file, cfg, session_id, "template"),
-                        output_json="",
-                        output_template="",
-                        allow_rule_fallback=True,
-                        table_targets=client_table_targets if isinstance(client_table_targets, list) else None,
+                    start_payload: Dict[str, Any] = {"type": "start", "mode": mode}
+                    if mode in ("entity_extraction", "table_filling"):
+                        start_payload["result_type"] = mode
+                    await manager.send_json(session_id, start_payload)
+                    await manager.send_json(
+                        session_id,
+                        {
+                            "type": "progress",
+                            "progress": 10,
+                            "message": "正在将数据填入模板…",
+                        },
                     )
+                    print(f"[WS] 调用 run_agent_c_api...")
+                    try:
+                        response = await _run_in_thread_with_progress(
+                            session_id,
+                            manager,
+                            run_agent_c_api,
+                            src=_resolve_file_reference(source_file, cfg, session_id, "source"),
+                            prompt=user_content,
+                            template=_resolve_file_reference(template_file, cfg, session_id, "template"),
+                            output_json="",
+                            output_template="",
+                            allow_rule_fallback=True,
+                            table_targets=client_table_targets if isinstance(client_table_targets, list) else None,
+                        )
+                    except Exception as exc:
+                        print(f"[API] WS table_filling 异常: {exc}")
+                        import traceback
+                        traceback.print_exc()
+                        err_text = f"表格填表失败: {exc}"
+                        await manager.send_json(
+                            session_id,
+                            {
+                                "type": "error",
+                                "mode": mode,
+                                "result_type": "table_filling",
+                                "message": err_text,
+                            },
+                        )
+                        add_message(
+                            session_id,
+                            "assistant",
+                            err_text,
+                            {"mode": mode},
+                            config=cfg,
+                            user_id=current_user.id if current_user else None,
+                        )
+                        continue
                     print(f"[API] WS run_agent_c_api 完成, 响应长度={len(str(response))}")
                     if isinstance(response, dict):
                         data_obj = response.get("data") if isinstance(response.get("data"), dict) else {}
@@ -1376,7 +1449,10 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
             
             # 发送开始信号
             print(f"[WS] 发送 start type=start mode={mode} session_id={session_id}")
-            await manager.send_json(session_id, {"type": "start", "mode": mode})
+            start_payload: Dict[str, Any] = {"type": "start", "mode": mode}
+            if mode in ("entity_extraction", "table_filling"):
+                start_payload["result_type"] = mode
+            await manager.send_json(session_id, start_payload)
 
             before_file_ids = {
                 f.id for f in get_session_files(session_id, config=cfg, user_id=current_user.id if current_user else None)

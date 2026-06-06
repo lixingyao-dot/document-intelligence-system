@@ -476,6 +476,11 @@ class AgentB(BaseAgent):
 
     def _extract_entities(self, task_spec: TaskSpec, progress_callback=None) -> AgentResponse:
         """提取实体数据。"""
+        from config import get_config
+
+        self.config = get_config()
+        self.model = self._init_extraction_model()
+
         input_text = self._resolve_input_text(task_spec)
         if not input_text.strip():
             return AgentResponse(success=False, message="源文件解析结果为空")
@@ -489,13 +494,28 @@ class AgentB(BaseAgent):
             template_columns=template_columns,
         )
 
-        rule_entities, rule_source = _pick_best_rule_entities(input_text, template_columns)
-        if progress_callback:
-            progress_callback(0, 1, f"规则解析完成（{rule_source}），已识别 {len(rule_entities)} 条…")
+        key_col = _guess_key_column(template_columns)
+        allow_rule_fallback = os.getenv("ALLOW_RULE_EXTRACTION_FALLBACK", "0").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+
+        if not self.model:
+            return AgentResponse(
+                success=False,
+                message=(
+                    "实体提取需要大模型参与：请在「设置」中选择「小米 MiMo」，"
+                    "填写 API Key，模型填 mimo-v2.5，Base URL 填 https://token-plan-cn.xiaomimimo.com/v1"
+                ),
+            )
 
         llm_entities: List[Dict[str, Any]] = []
         chunk_count = 0
         total_extractions = 0
+        if progress_callback:
+            progress_callback(0, 1, "正在调用大模型理解文档并提取实体…")
+        llm_error: Optional[str] = None
         try:
             llm_entities, chunk_count, total_extractions = self._extract_from_chunks(
                 input_text=input_text,
@@ -505,22 +525,31 @@ class AgentB(BaseAgent):
                 progress_callback=progress_callback,
             )
         except Exception as exc:
-            self.logger.warning(f"LLM 分块抽取失败，将使用规则结果: {exc}")
+            llm_error = str(exc)
+            self.logger.warning(f"LLM 分块抽取失败: {exc}")
 
         llm_flat = self._flatten_entities(llm_entities, template_columns, schema.get("mapping", {}))
-        key_col = _guess_key_column(template_columns)
-        rule_score = _score_entity_records(rule_entities, key_col)
-        llm_score = _score_entity_records(llm_flat, key_col)
 
-        if rule_score >= llm_score and rule_entities:
-            entities = rule_entities
-            extract_source = f"rule:{rule_source}"
-        elif llm_flat:
+        if llm_flat:
             entities = llm_flat
             extract_source = "llm"
+        elif allow_rule_fallback:
+            rule_entities, rule_source = _pick_best_rule_entities(input_text, template_columns)
+            if rule_entities:
+                entities = rule_entities
+                extract_source = f"rule:{rule_source}"
+            else:
+                entities = []
+                extract_source = "none"
         else:
-            entities = rule_entities
-            extract_source = f"rule:{rule_source}"
+            detail = llm_error or "大模型未返回有效实体"
+            return AgentResponse(
+                success=False,
+                message=(
+                    f"大模型提取失败：{detail}。"
+                    "请检查 MiMo API Key、网络与模型配置；演示场景禁止静默规则兜底。"
+                ),
+            )
 
         entities = _dedupe_records(entities, key_col)
         hints = _build_extraction_hints(
@@ -529,7 +558,12 @@ class AgentB(BaseAgent):
             entities,
             extract_source,
         )
-        message = f"实体提取完成，共提取 {len(entities)} 条记录"
+        if extract_source == "llm":
+            message = f"实体提取完成（大模型参与），共 {len(entities)} 条记录"
+        elif extract_source.startswith("rule"):
+            message = f"实体提取完成（规则兜底，模型未返回有效结果），共 {len(entities)} 条记录"
+        else:
+            message = f"实体提取完成，共 {len(entities)} 条记录"
         if hints:
             message = f"{message}\n{hints}"
 
@@ -560,15 +594,28 @@ class AgentB(BaseAgent):
         llm_provider = (self.config.llm.provider or os.getenv("LLM_PROVIDER") or "deepseek").strip().lower()
 
         # 优先按显式 provider 选择；若 provider 未识别，则按模型名前缀自动推断
+        provider_kwargs: Dict[str, Any] = {}
         if llm_provider in ("zhipu", "glm"):
             provider_name = "ZhipuLanguageModel"
             api_key = os.getenv("ZHIPU_API_KEY") or self.config.llm.api_key
+        elif llm_provider == "mimo":
+            provider_name = "MimoLanguageModel"
+            api_key = os.getenv("MIMO_API_KEY") or self.config.llm.api_key
+            base_url = self.config.llm.base_url or os.getenv("MIMO_BASE_URL")
+            if base_url:
+                provider_kwargs["base_url"] = base_url
         elif llm_provider == "deepseek":
             provider_name = "DeepSeekLanguageModel"
             api_key = os.getenv("DEEPSEEK_API_KEY") or self.config.llm.api_key
         elif str(model_id).lower().startswith("glm"):
             provider_name = "ZhipuLanguageModel"
             api_key = os.getenv("ZHIPU_API_KEY") or self.config.llm.api_key
+        elif str(model_id).lower().startswith("mimo"):
+            provider_name = "MimoLanguageModel"
+            api_key = os.getenv("MIMO_API_KEY") or self.config.llm.api_key
+            base_url = self.config.llm.base_url or os.getenv("MIMO_BASE_URL")
+            if base_url:
+                provider_kwargs["base_url"] = base_url
         else:
             provider_name = "DeepSeekLanguageModel"
             api_key = os.getenv("DEEPSEEK_API_KEY") or self.config.llm.api_key
@@ -577,10 +624,11 @@ class AgentB(BaseAgent):
             self.logger.warning(f"未检测到提取模型 API Key(provider={provider_name})，后续将回退到规则抽取")
             return None
 
+        provider_kwargs["api_key"] = api_key
         model_config = factory.ModelConfig(
             model_id=model_id,
             provider=provider_name,
-            provider_kwargs={"api_key": api_key},
+            provider_kwargs=provider_kwargs,
         )
         return factory.create_model(model_config)
 
@@ -686,7 +734,11 @@ class AgentB(BaseAgent):
 
         # 立即通知前端任务已启动（此时文本已分块完毕，后端开始并发抽取）
         if progress_callback:
-            progress_callback(0, len(chunks_with_offset), f"开始提取 {len(chunks_with_offset)} 个分块...")
+            progress_callback(
+                0,
+                len(chunks_with_offset),
+                f"大模型提取中（{len(chunks_with_offset)} 个文本分块）…",
+            )
 
         prompt_description = f"""
 从文本中提取以下字段（字段名必须与下列名称完全一致，每条记录对应一个城市/主体）：

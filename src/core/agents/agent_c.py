@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import re
 import os
+import re
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+# 条件解析 LLM 专用超时（秒）；须短于全局 30 分钟，且禁用流式避免长时间挂起
+_FILTER_PLAN_LLM_TIMEOUT = float(os.getenv("FILTER_PLAN_LLM_TIMEOUT_SECONDS", "30"))
 
 from openpyxl import load_workbook
 from docx import Document
@@ -135,14 +138,9 @@ class AgentB(BaseAgent):
                     return AgentResponse(success=False, message=f"table_targets[{idx}] 缺少 instruction/condition")
 
                 field_candidates = self._extract_field_candidates(target_instruction, columns)
-                plan = self._build_filter_plan_with_llm(target_instruction, columns, field_candidates)
-                llm_has_conditions = bool(plan.get("conditions"))
-                llm_has_groups = bool(plan.get("groups"))
-                plan_source = "llm"
-
-                if (not llm_has_conditions and not llm_has_groups) and allow_rule_fallback:
-                    plan = self._build_filter_plan_fallback(target_instruction, columns)
-                    plan_source = "rule_fallback"
+                plan, plan_source = self._build_filter_plan_auto(
+                    target_instruction, columns, field_candidates, allow_rule_fallback
+                )
 
                 if not plan.get("conditions") and not plan.get("groups"):
                     return AgentResponse(success=False, message=f"table_targets[{idx}] 条件无法解析为可执行筛选计划")
@@ -238,15 +236,10 @@ class AgentB(BaseAgent):
 
         # 无模板：仅按条件筛选并导出 JSON
         field_candidates = self._extract_field_candidates(instruction, columns)
-        plan = self._build_filter_plan_with_llm(instruction, columns, field_candidates)
-        llm_has_conditions = bool(plan.get("conditions"))
-        llm_has_groups = bool(plan.get("groups"))
-        plan_source = "llm"
-
         allow_rule_fallback = bool(task_spec.parameters.get("allow_rule_fallback", True))
-        if (not llm_has_conditions and not llm_has_groups) and allow_rule_fallback:
-            plan = self._build_filter_plan_fallback(instruction, columns)
-            plan_source = "rule_fallback"
+        plan, plan_source = self._build_filter_plan_auto(
+            instruction, columns, field_candidates, allow_rule_fallback
+        )
 
         has_conditions = bool(plan.get("conditions"))
         has_groups = bool(plan.get("groups"))
@@ -338,15 +331,14 @@ class AgentB(BaseAgent):
             plan: Dict[str, Any] = {}
             plan_source = "template_first_fill_all"
         else:
-            plan = self._build_filter_plan_with_llm(instruction, columns, field_candidates)
-            llm_has_conditions = bool(plan.get("conditions"))
-            llm_has_groups = bool(plan.get("groups"))
-            plan_source = "template_first_llm"
-
             allow_rule_fallback = bool(task_spec.parameters.get("allow_rule_fallback", True))
-            if (not llm_has_conditions and not llm_has_groups) and allow_rule_fallback:
-                plan = self._build_filter_plan_fallback(instruction, columns)
+            plan, plan_source = self._build_filter_plan_auto(
+                instruction, columns, field_candidates, allow_rule_fallback
+            )
+            if plan_source == "rule_fallback":
                 plan_source = "template_first_rule_fallback"
+            elif plan_source == "llm":
+                plan_source = "template_first_llm"
 
             has_conditions = bool(plan.get("conditions"))
             has_groups = bool(plan.get("groups"))
@@ -398,6 +390,7 @@ class AgentB(BaseAgent):
                 self.logger.error("[AgentC] Word 模板填写失败: %s", e, exc_info=True)
 
         field_count = len(fill_fields) or len(column_mapping)
+        plan_hint = self._plan_source_summary(plan_source)
         if fill_all:
             summary = f"填表完成：按模板 {field_count} 个字段写入 {len(filtered_rows)} 行"
         elif len(filtered_rows) == 0:
@@ -407,6 +400,8 @@ class AgentB(BaseAgent):
             )
         else:
             summary = f"填表完成：按模板 {field_count} 个字段写入 {len(filtered_rows)} 行（已筛选）"
+        if plan_hint:
+            summary = f"{summary}；{plan_hint}"
 
         self.logger.info(
             "[AgentC] 填表结果: template_filled=%s, matched_rows=%d, template_output=%s",
@@ -653,17 +648,77 @@ class AgentB(BaseAgent):
         )
 
         try:
-            response = self.llm.chat_with_system(system_prompt=system_prompt, user_input=user_prompt)
+            response = self.llm.chat_with_system(
+                system_prompt=system_prompt,
+                user_input=user_prompt,
+                streaming=False,
+                request_timeout=_FILTER_PLAN_LLM_TIMEOUT,
+                max_retries=0,
+            )
             plan = self._extract_json_object(response)
             return self._sanitize_filter_plan(plan, columns)
         except Exception as ex:
             self.logger.warning(f"LLM条件解析失败，回退规则解析: {ex}")
             return {}
 
+    @staticmethod
+    def _plan_source_summary(plan_source: str) -> str:
+        src = str(plan_source or "")
+        if "llm" in src:
+            return "大模型已理解筛选条件"
+        if "rule" in src:
+            return "规则兜底解析筛选条件（模型未返回有效计划）"
+        return ""
+
+    def _build_filter_plan_auto(
+        self,
+        instruction: str,
+        columns: List[str],
+        field_candidates: List[str],
+        allow_rule_fallback: bool = True,
+    ) -> Tuple[Dict[str, Any], str]:
+        """先走大模型理解条件；失败/超时后再规则兜底（演示必须 LLM 优先）。"""
+        plan = self._build_filter_plan_with_llm(instruction, columns, field_candidates)
+        if plan.get("conditions") or plan.get("groups"):
+            return plan, "llm"
+
+        if allow_rule_fallback:
+            plan = self._build_filter_plan_fallback(instruction, columns)
+            if plan.get("conditions") or plan.get("groups"):
+                return plan, "rule_fallback"
+
+        return {}, "none"
+
+    def _pick_datetime_column(self, columns: List[str]) -> Optional[str]:
+        for col in columns:
+            norm = self._normalize_column_name(col)
+            if any(k in norm for k in ("日期", "时间", "date", "time")):
+                return col
+        return None
+
     def _build_filter_plan_fallback(self, instruction: str, columns: List[str]) -> Dict[str, Any]:
         text = instruction.strip()
         if not text:
             return {}
+
+        date_range = re.search(
+            r"(?:从\s*)?(\d{4}[/-]\d{1,2}[/-]\d{1,2})\s*(?:到|至|～|~|-)\s*(\d{4}[/-]\d{1,2}[/-]\d{1,2})",
+            text,
+        )
+        if date_range:
+            date_col = self._pick_datetime_column(columns)
+            if date_col:
+                return {
+                    "logic": "and",
+                    "conditions": [
+                        {
+                            "field": date_col,
+                            "operator": "between",
+                            "value": date_range.group(1),
+                            "value2": date_range.group(2),
+                        }
+                    ],
+                }
 
         grouped_plan = self._build_grouped_plan_from_numbered_blocks(text, columns)
         if grouped_plan.get("groups"):
@@ -1963,10 +2018,10 @@ def _infer_table_targets_from_prompt(prompt: str) -> List[Dict[str, Any]]:
 
     inferred: List[Dict[str, Any]] = []
 
-    # 形态1：块级样式（标题独占一行）
+    # 形态1：块级样式（标题独占一行；含课堂演示「第一张 / 表一」）
     block_markers = list(
         re.finditer(
-            r"^\s*((?:表|目标|场景)[^\n：:]{0,60})\s*[：:]\s*$",
+            r"^\s*((?:第[一二三四五六七八九十\d]+张|(?:表|目标|场景)[^\n：:]{0,60}))\s*[：:]?\s*$",
             text,
             flags=re.M,
         )
@@ -2121,6 +2176,8 @@ def _contains_reference_token(text: str) -> bool:
 
 def _normalize_pair_field(field: str) -> str:
     name = str(field or "").strip()
+    if name in ("审核时间", "监测时间"):
+        return name
     if name == "时间":
         return "监测时间"
     return name
@@ -2201,7 +2258,7 @@ def _format_instruction_from_pairs(pairs: Dict[str, str]) -> str:
         return ""
 
     ordered: List[Tuple[str, str]] = []
-    preferred = ["监测时间", "城市", "区", "站点名称", "日期"]
+    preferred = ["审核时间", "监测时间", "城市", "区", "站点名称", "日期"]
     for key in preferred:
         if key in pairs:
             ordered.append((key, pairs[key]))
@@ -2348,7 +2405,10 @@ def _multi_target_signal_level(prompt: str) -> str:
     if not text.strip():
         return "none"
 
-    # 强信号：显式“表一/目标A/场景1:”这类标题 >= 2
+    # 强信号：显式「第一张 / 表一 / 目标A」>= 2
+    sheet_markers = len(re.findall(r"第[一二三四五六七八九十\d]+张", text))
+    if sheet_markers >= 2:
+        return "strong"
     marker_count = len(
         re.findall(
             r"(?:表|目标|场景)[^\n：:]{0,60}\s*[：:]",
@@ -2360,7 +2420,7 @@ def _multi_target_signal_level(prompt: str) -> str:
 
     # 弱信号：存在多个“时间+城市”条件对，但不一定真是多表。
     city_count = len(re.findall(r"城市\s*(?:是|为|：|:)", text))
-    time_count = len(re.findall(r"(?:监测时间|时间)\s*(?:是|为|：|:)", text))
+    time_count = len(re.findall(r"(?:审核时间|监测时间|时间)\s*(?:是|为|：|:)", text))
     if city_count >= 2 and time_count >= 2:
         return "weak"
 
@@ -2524,7 +2584,7 @@ def run_agent_c_api(
         inferred_table_targets = _infer_table_targets_from_prompt(normalized_prompt)
         if inferred_table_targets:
             inferred_source = "rule"
-        if not inferred_table_targets:
+        if not inferred_table_targets and signal_level != "none":
             inferred_table_targets = _infer_table_targets_from_prompt_with_llm(normalized_prompt)
             if inferred_table_targets:
                 inferred_source = "llm"
@@ -2532,7 +2592,7 @@ def run_agent_c_api(
         if inferred_table_targets:
             inferred_table_targets, reference_resolve_source = _resolve_table_target_references(inferred_table_targets)
 
-        mode_by_llm = _infer_table_mode_with_llm(normalized_prompt)
+        mode_by_llm = _infer_table_mode_with_llm(normalized_prompt) if signal_level != "none" else "unknown"
 
     # 多目标强信号，或“弱信号+LLM判多表”同时满足时才fail-fast，避免单表被误判。
     should_fail_multi = (

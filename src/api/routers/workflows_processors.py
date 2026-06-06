@@ -162,7 +162,7 @@ def _chat_or_keep(content: str, prompt: str, task_name: str, temperature: float 
 
 
 def _entity_extraction_content(content: str, file_name: str, config_values: Dict) -> Optional[str]:
-    """按前端配置抽取结构化实体，输出JSON文本。"""
+    """按前端配置抽取结构化实体，输出JSON文本（长文档自动分块）。"""
     fields = _split_config_text(config_values.get("entityFieldList"))
     custom_types = _split_config_text(config_values.get("customEntityTypes"))
     alias_map = str(config_values.get("aliasMap") or "").strip()
@@ -170,19 +170,78 @@ def _entity_extraction_content(content: str, file_name: str, config_values: Dict
     if not fields and not custom_types and not custom_prompt:
         raise ValueError("实体提取节点缺少配置：请填写提取字段列表、自定义实体类型或补充抽取规则")
 
-    text = _text_sample(content)
-    prompt = custom_prompt.replace("{content}", text) if "{content}" in custom_prompt else custom_prompt
-    prompt = (
-        "请从文档中抽取结构化实体，必须只输出JSON对象，不要输出解释文字。\n"
-        "JSON结构：{\"schema\":{\"fields\":[...]},\"entities\":[{...}],\"source_file\":\"...\"}\n"
-        f"源文件：{file_name}\n"
-        f"字段列表：{fields or '按规则自行判断'}\n"
-        f"自定义实体类型：{custom_types or '无'}\n"
-        f"字段别名映射：{alias_map or '无'}\n"
-        f"补充规则：{prompt or '无'}\n\n"
-        f"文档内容：\n{text}"
-    )
-    return _chat_or_keep(content, prompt, "实体提取", temperature=0.2)
+    service = _get_llm_service()
+    if not service:
+        raise ValueError("实体提取失败：大模型服务不可用，请在设置中配置 API Key 后重试")
+
+    chunks = _split_text_for_llm(content)
+    total = len(chunks)
+    all_entities: List[Dict] = []
+    schema_info: Optional[Dict] = None
+
+    try:
+        for idx, piece in enumerate(chunks, 1):
+            if not piece.strip():
+                continue
+
+            if custom_prompt:
+                text_for_prompt = custom_prompt.replace("{content}", piece) if "{content}" in custom_prompt else f"{custom_prompt}\n{piece}"
+            else:
+                text_for_prompt = piece
+
+            prompt = (
+                "请从文档中抽取结构化实体，必须只输出JSON对象，不要输出解释文字。\n"
+                "JSON结构：{\"schema\":{\"fields\":[...]},\"entities\":[{...}],\"source_file\":\"...\"}\n"
+                f"源文件：{file_name}\n"
+                f"字段列表：{fields or '按规则自行判断'}\n"
+                f"自定义实体类型：{custom_types or '无'}\n"
+                f"字段别名映射：{alias_map or '无'}\n"
+                f"补充规则：{custom_prompt or '无'}\n"
+            )
+            if total > 1:
+                prompt += f"【分段说明】这是第 {idx}/{total} 段，请只抽取本段中的实体。\n"
+            prompt += f"\n文档内容：\n{text_for_prompt}"
+
+            out_budget = max(4096, min(16384, len(piece) * 2 + 1024))
+            response = service.chat(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=out_budget,
+                strip_markdown_output=False,
+            )
+            chunk_result = response if isinstance(response, str) else str(response)
+
+            # 解析每块的 JSON
+            try:
+                import json as _ej
+                parsed = _ej.loads(chunk_result)
+                if isinstance(parsed, dict):
+                    if not schema_info and parsed.get("schema"):
+                        schema_info = parsed["schema"]
+                    all_entities.extend(parsed.get("entities") or [])
+            except (ValueError, TypeError):
+                import re as _re, json as _ej2
+                m = _re.search(r'\{[\s\S]*\}', chunk_result)
+                if m:
+                    try:
+                        parsed = _ej2.loads(m.group(0))
+                        if isinstance(parsed, dict):
+                            if not schema_info and parsed.get("schema"):
+                                schema_info = parsed["schema"]
+                            all_entities.extend(parsed.get("entities") or [])
+                    except (ValueError, TypeError):
+                        pass
+
+        import json as _final
+        result = {
+            "schema": schema_info or {"fields": fields or []},
+            "entities": all_entities,
+            "source_file": file_name,
+        }
+        return _final.dumps(result, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"实体提取失败: {e}")
+        raise ValueError(f"实体提取失败：{e}") from e
 
 
 def _split_text_for_llm(content: str, max_chars: int = _LLM_CHUNK_CHARS) -> List[str]:
@@ -480,12 +539,15 @@ def _extract_summary_content(content: str, file_name: str, config_values: Dict) 
         if total == 1:
             piece = chunks[0]
             prompt = _build_summary_chunk_prompt(piece, config_values)
-            return _llm_chat(
+            result = _llm_chat(
                 service,
                 [{"role": "user", "content": prompt}],
                 len(piece),
                 temperature=0.5,
             )
+            if not result or not result.strip():
+                return f"[内容提取] 未从「{file_name}」中提取到有效内容。"
+            return result
 
         logger.info(
             "工作流摘要分块: file=%s total_chars=%d chunks=%d",
@@ -510,45 +572,85 @@ def _extract_summary_content(content: str, file_name: str, config_values: Dict) 
             logger.info("工作流摘要片段: file=%s chunk=%d/%d", file_name, idx, total)
 
         merge_prompt = _build_summary_merge_prompt(partials, config_values)
-        return _llm_chat(
+        result = _llm_chat(
             service,
             [{"role": "user", "content": merge_prompt}],
             len(merge_prompt),
             temperature=0.4,
         )
+        if not result or not result.strip():
+            return f"[内容提取] 未从「{file_name}」中提取到有效内容。"
+        return result
     except Exception as e:
         logger.error(f"摘要提取失败: {e}")
         raise ValueError(f"内容提取失败：{e}") from e
 
 
 def _extract_data_content(content: str, file_name: str, config_values: Dict) -> Optional[str]:
-    """从文档中提取结构化数据。"""
+    """从文档中提取结构化数据（长文档自动分块，JSON 合并）。"""
     service = _get_llm_service()
     if not service:
         raise ValueError("大模型服务不可用，请在设置中配置 API Key 后重试")
-    
-    # 如果用户提供了自定义提示词，优先使用
-    custom_prompt = config_values.get("prompt", "").strip()
-    if custom_prompt:
-        text = content[:8000] if len(content) > 8000 else content
-        prompt = custom_prompt.replace("{content}", text) if "{content}" in custom_prompt else f"{custom_prompt}\n{text}"
-    else:
-        data_format = config_values.get("dataFormat", "json")
-        extract_fields = config_values.get("extractFields", "")
-        text = content[:8000] if len(content) > 8000 else content
-        
-        prompt = f"请从以下文档中提取数据，格式为{data_format}\n"
-        if extract_fields:
-            prompt += f"需要提取的字段：{extract_fields}\n"
-        prompt += f"文档内容：\n{text}"
-    
+
+    custom_prompt = str(config_values.get("prompt") or "").strip()
+    data_format = config_values.get("dataFormat", "json")
+    extract_fields = config_values.get("extractFields", "")
+    is_json = data_format.lower() == "json"
+
+    chunks = _split_text_for_llm(content)
+    total = len(chunks)
+    all_items: List = []
+
     try:
-        response = service.chat(
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            strip_markdown_output=False,
-        )
-        return response if isinstance(response, str) else str(response)
+        for idx, piece in enumerate(chunks, 1):
+            if not piece.strip():
+                continue
+
+            if custom_prompt:
+                prompt = custom_prompt.replace("{content}", piece) if "{content}" in custom_prompt else f"{custom_prompt}\n{piece}"
+            else:
+                prompt = f"请从以下文档中提取数据，格式为{data_format}\n"
+                if extract_fields:
+                    prompt += f"需要提取的字段：{extract_fields}\n"
+                if total > 1:
+                    prompt += f"【分段说明】这是第 {idx}/{total} 段，请只提取本段中的数据，不要输出其他段的内容。\n"
+                prompt += f"文档内容：\n{piece}"
+
+            out_budget = max(4096, min(16384, len(piece) * 2 + 1024))
+            response = service.chat(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=out_budget,
+                strip_markdown_output=False,
+            )
+            chunk_result = response if isinstance(response, str) else str(response)
+            if is_json:
+                try:
+                    import json as _cj
+                    parsed = _cj.loads(chunk_result)
+                    if isinstance(parsed, list):
+                        all_items.extend(parsed)
+                    elif isinstance(parsed, dict):
+                        all_items.append(parsed)
+                except (ValueError, TypeError):
+                    # 无法解析为 JSON，尝试提取 JSON 数组片段
+                    import re as _re, json as _cj2
+                    m = _re.search(r'\[[\s\S]*\]', chunk_result)
+                    if m:
+                        try:
+                            all_items.extend(_cj2.loads(m.group(0)))
+                        except (ValueError, TypeError):
+                            pass
+            else:
+                all_items.append(chunk_result)
+
+        if is_json and all_items:
+            import json as _final
+            return _final.dumps(all_items, ensure_ascii=False, indent=2)
+        elif all_items and not is_json:
+            return "".join(all_items)
+        else:
+            return f"[数据抽取] 未从「{file_name}」中提取到有效数据，请检查提取规则描述或字段配置。"
     except Exception as e:
         logger.error(f"数据提取失败: {e}")
         raise ValueError(f"数据提取失败：{e}") from e
