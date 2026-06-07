@@ -32,6 +32,7 @@ from utils.llm_debug import mask_secret
 
 _ws_llm = get_logger("api.messages.ws_llm")
 _ws_conn = get_logger("api.messages.ws_conn")
+logger = get_logger("api.messages")
 
 router = APIRouter(prefix="/api/messages", tags=["消息管理"])
 
@@ -972,6 +973,14 @@ async def send_message(session_id: str, request: SendMessageRequest, authorizati
     
     effective_mode = normalize_chat_mode(request.mode or session.current_mode or "default_conversation")
 
+    # 智能模式检测：用户未显式选择模式时，根据文件+指令自动推断
+    if effective_mode == "default_conversation" and (request.files or request.template_files):
+        from utils.chat_mode import auto_detect_mode
+        detected = auto_detect_mode(request.content, request.files, request.template_files)
+        if detected != "default_conversation":
+            logger.info(f"[智能分发] default_conversation → {detected}")
+            effective_mode = detected
+
     user_meta: Dict[str, Any] = {**(request.metadata or {}), "mode": effective_mode}
     if request.files:
         user_meta["files"] = request.files
@@ -1196,7 +1205,7 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
             # 显式 null/空串时回退到会话记录的模式，避免误走默认对话
             raw_mode = data.get("mode")
             mode = normalize_chat_mode(raw_mode or session.current_mode or "default_conversation")
-            
+
             # 优先使用前端传来的文件（和消息一起发送）
             # 这样用户可以随时切换勾选，文件跟随消息
             client_files = data.get("files") or []
@@ -1208,8 +1217,14 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
             client_files = enrich_files_with_library_paths(client_files, cfg)
             client_templates = enrich_files_with_library_paths(client_templates, cfg)
 
+            # 初始化文件变量，避免后续 UnboundLocalError
+            files: List[Dict[str, Any]] = []
+            template_files: List[Dict[str, Any]] = []
+
             # 实体提取模式
             if mode == "entity_extraction":
+                print(f"[WS] 进入 entity_extraction 分支, client_files={[f.get('file_name') for f in client_files]}, client_templates={[f.get('file_name') for f in client_templates]}")
+
                 db_data_files, db_template_files = get_selected_session_files_payload(session_id, cfg)
                 db_path_map = {f.get('file_name'): f for f in db_data_files}
                 db_tpl_path_map = {f.get('file_name'): f for f in db_template_files}
@@ -1437,6 +1452,30 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
             # 确保临时文件在数据库中有记录
             files = _ensure_files_in_db(files, session_id, cfg, current_user.id if current_user else None)
             template_files = _ensure_files_in_db(template_files, session_id, cfg, current_user.id if current_user else None)
+
+            # 智能模式检测：用户未显式选择模式时，根据文件+指令自动推断
+            if mode == "default_conversation" and (files or template_files):
+                from utils.chat_mode import auto_detect_mode
+                detected = auto_detect_mode(user_content, files, template_files)
+                if detected != "default_conversation":
+                    print(f"[WS] 智能分发: {mode} → {detected}")
+                    mode = detected
+                    # 重新用 entity_extraction / table_filling 的文件获取逻辑，确保路径完整
+                    if detected in ("entity_extraction", "table_filling"):
+                        db_data_files, db_tpl_files = get_selected_session_files_payload(session_id, cfg)
+                        db_path_map = {f.get('file_name'): f for f in db_data_files}
+                        db_tpl_map = {f.get('file_name'): f for f in db_tpl_files}
+                        new_files = []
+                        for cf in (client_files or []):
+                            matched = db_path_map.get(cf.get('file_name'))
+                            new_files.append(matched or cf)
+                        new_templates = []
+                        for ct in (client_templates or []):
+                            matched = db_tpl_map.get(ct.get('file_name'))
+                            new_templates.append(matched or ct)
+                        files = _ensure_files_in_db(new_files or db_data_files, session_id, cfg, current_user.id if current_user else None)
+                        template_files = _ensure_files_in_db(new_templates or db_tpl_files, session_id, cfg, current_user.id if current_user else None)
+                        print(f"[WS] 文件重新获取: files={[f.get('file_name') for f in files]}, templates={[f.get('file_name') for f in template_files]}")
 
             user_meta: Dict[str, Any] = {"mode": mode}
             if files:

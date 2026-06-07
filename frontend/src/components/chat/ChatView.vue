@@ -483,8 +483,8 @@ function userMessageAttachments(msg) {
       />
     </div>
     <div class="chat-main">
-      <!-- 处理模式气泡容器 -->
-      <div class="mode-selector">
+      <!-- 处理模式（已隐藏：由系统根据文件+指令智能分发） -->
+      <div class="mode-selector" style="display: none;">
         <span class="mode-label">处理模式:</span>
         <div class="mode-tabs">
           <button

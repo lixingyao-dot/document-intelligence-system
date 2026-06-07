@@ -25,3 +25,4 @@ workspace/sessions/
 dist-electron.old.*/
 dist-electron.bak/
 test-fixtures/
+dist/
