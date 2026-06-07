@@ -1,8 +1,9 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { MousePointerClick } from 'lucide-vue-next'
+import { ref, computed, onMounted, watch } from 'vue'
+import { FileOutput, FileText, FolderOpen, MousePointerClick, X } from 'lucide-vue-next'
 import { useWorkflowStore, workflowFileMatchesKind } from '../../stores/workflowStore'
 import { useLibraryStore } from '../../stores/libraryStore'
+import libraryApi from '../../api/library'
 import { resolveWorkflowIcon } from '../../utils/workflowIcons'
 import { isElectronShell, pickOutputFolder, pickOpenFiles } from '../../utils/desktopShell'
 
@@ -46,8 +47,21 @@ function kindLabelZh(kind) {
   return map[kind] || kind
 }
 const fileInputRef = ref(null)
+const compareRefFileInputRef = ref(null)
 const isLoadingLibrary = ref(false)
 const newSpaceName = ref('')
+const showNewSpaceInput = ref(false)
+
+// 对比节点：参考文件选择状态
+const compareRefSpaceId = ref(null)
+const compareRefDocs = ref([])
+const compareRefSelectedId = ref(null)
+const compareRefLocalFile = ref(null)
+const isLoadingCompareLib = ref(false)
+
+// tab 状态
+const inputSource = ref('library')
+const compareSource = ref('local')
 
 // 加载文档库空间
 onMounted(async () => {
@@ -228,11 +242,15 @@ function handleFileSelect(event) {
 function handleDrop(event) {
   event.preventDefault()
   const files = Array.from(event.dataTransfer?.files || [])
+  if (!files.length) return
   const kinds = workflowStore.workflowInputFileKinds
   const kindList = Array.isArray(kinds) ? kinds : (kinds ? [kinds] : [])
   const allowed = files.filter(f => kindList.some(k => workflowFileMatchesKind(f.name, k)))
   if (allowed.length > 0) {
-    workflowStore.addLocalFiles(allowed)
+    const normalized = allowed.map(f =>
+      f.path ? { name: f.name, path: f.path, size: f.size, _fromElectron: true } : f
+    )
+    workflowStore.addLocalFiles(normalized)
   }
 }
 
@@ -267,6 +285,53 @@ async function handleElectronFilePick() {
   workflowStore.addLocalFiles(pseudoFiles)
 }
 
+async function handleCompareFilePick() {
+  // Electron 环境：使用系统文件对话框
+  if (isElectronShell()) {
+    const node = workflowStore.selectedNode
+    const kinds = node?.configValues?.referenceFileKinds || ['pdf', 'txt', 'md', 'docx', 'xlsx']
+    const filterMap = {
+      pdf:  { name: 'PDF 文件',  extensions: ['pdf'] },
+      md:   { name: 'Markdown',  extensions: ['md', 'markdown'] },
+      txt:  { name: '文本文件',  extensions: ['txt'] },
+      docx: { name: 'Word 文档', extensions: ['doc', 'docx'] },
+      xlsx: { name: 'Excel 表格', extensions: ['xls', 'xlsx'] },
+    }
+    const kindList = Array.isArray(kinds) ? kinds : (kinds ? [kinds] : [])
+    const exts = [...new Set(kindList.flatMap(k => filterMap[k]?.extensions || []))]
+    const filters = exts.length > 0
+      ? [{ name: '参考文件', extensions: exts }, { name: '所有文件', extensions: ['*'] }]
+      : [{ name: '所有文件', extensions: ['*'] }]
+
+    const filePaths = await pickOpenFiles({ title: '选择参考文件', filters })
+    if (!filePaths || filePaths.length === 0) return
+
+    const fp = filePaths[0]
+    const name = fp.split(/[\\/]/).pop() || fp
+    compareRefLocalFile.value = { name, path: fp, size: 0 }
+    updateConfig('referencePath', fp)
+    compareRefSelectedId.value = null
+    updateConfig('referenceDocId', null)
+  } else {
+    // 浏览器环境：使用隐藏的 file input
+    compareRefFileInputRef.value?.click()
+  }
+}
+
+// 浏览器环境：file input 选择参考文件
+function handleCompareRefFileSelect(event) {
+  const files = Array.from(event.target.files || [])
+  if (files.length === 0) return
+  const file = files[0]
+  compareRefLocalFile.value = { name: file.name, path: file.name, size: file.size }
+  updateConfig('referencePath', file.name)
+  compareRefSelectedId.value = null
+  updateConfig('referenceDocId', null)
+  if (compareRefFileInputRef.value) {
+    compareRefFileInputRef.value.value = ''
+  }
+}
+
 // ==================== 语言/格式选择 ====================
 function handleLanguageChange(langCode) {
   updateConfig('targetLanguage', langCode)
@@ -281,6 +346,11 @@ function _formatSize(bytes) {
   if (bytes < 1024) return bytes + ' B'
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+function _fileExt(filename) {
+  const m = (filename || '').match(/\.([a-zA-Z0-9]+)$/)
+  return m ? m[1].toUpperCase() : ''
 }
 
 // ==================== 目标文档库选择 ====================
@@ -331,6 +401,35 @@ const currentFormat = computed(() => {
   const node = workflowStore.selectedNode
   if (!node) return null
   return getFieldValue({ key: 'outputFormat' }, node) || workflowStore.outputFormats[0]?.code
+})
+
+// 对比节点：参考文件文档库 ID
+const compareRefSpaceIdComputed = computed(() => {
+  const node = workflowStore.selectedNode
+  if (!node || node.schemaKey !== 'schema-compare-docs') return null
+  return getFieldValue({ key: 'referenceSpaceId' }, node) || null
+})
+
+watch(compareRefSpaceIdComputed, async (spaceId) => {
+  compareRefSpaceId.value = spaceId
+  compareRefSelectedId.value = null
+  compareRefDocs.value = []
+  if (!spaceId) return
+  isLoadingCompareLib.value = true
+  try {
+    const res = await libraryApi.getDocs(spaceId)
+    const docs = (res?.docs || []).map(d => ({
+      id: d.id,
+      name: d.file_name,
+      size: d.file_size,
+      size_bytes: d.file_size,
+    }))
+    compareRefDocs.value = docs
+  } catch (e) {
+    console.error('loadCompareRefDocs error:', e)
+  } finally {
+    isLoadingCompareLib.value = false
+  }
 })
 
 /** 是否显示该 schema 字段（支持 conditionField、dependsOn、arrayIncludes） */
@@ -698,25 +797,57 @@ function nodeStatusText(status) {
         <div v-if="workflowStore.selectedNode.type === 'input'" class="config-group">
           <div class="config-group-label">
             待处理文档
-            <span class="doc-count-badge">{{ displayedDocs.length }} 个</span>
+            <span class="doc-count-badge">{{ displayedDocs.length + displayedLocalFiles.length }} 个</span>
           </div>
 
-          <p class="doc-source-format-hint" style="margin-bottom: 8px;">
-            可从文档库勾选，也可点击下方按钮直接从本地选择文件。
-          </p>
+          <!-- Tab 切换 -->
+          <div class="compare-source-tabs">
+            <button
+              class="compare-source-tab"
+              :class="{ active: inputSource === 'library' }"
+              @click="inputSource = 'library'"
+            >
+              <FileOutput :size="14" /> 文档库
+            </button>
+            <button
+              class="compare-source-tab"
+              :class="{ active: inputSource === 'local' }"
+              @click="inputSource = 'local'"
+            >
+              <FolderOpen :size="14" /> 本地文件
+            </button>
+          </div>
 
-          <div class="doc-library-section">
-            <div v-if="isLoadingLibrary" class="doc-loading">
+          <!-- 文档库 tab -->
+          <div v-if="inputSource === 'library'" style="margin-top:10px;">
+            <!-- 文档库选择器：内嵌在 tab 内 -->
+            <div class="field" style="margin-bottom:10px;">
+              <label class="field-label">输入文档库</label>
+              <select
+                class="config-select"
+                :value="currentSpaceId || ''"
+                @change="handleSpaceChange($event.target.value)"
+              >
+                <option value="">请选择文档库</option>
+                <option
+                  v-for="space in libraryStore.spaces"
+                  :key="space.id"
+                  :value="space.id"
+                >{{ space.name }}</option>
+              </select>
+            </div>
+
+            <div v-if="isLoadingLibrary" class="compare-loading">
               <span class="loading-dots-sm"><span></span><span></span><span></span></span> 加载文档...
             </div>
-            <div v-else-if="!currentSpaceId" class="doc-empty-hint">
-              请先在「参数配置」中选择一个文档库
+            <div v-else-if="!currentSpaceId" class="compare-hint">
+              请先选择一个文档库
             </div>
             <template v-else>
               <div class="doc-source-format-hint">
-                文档库中与当前源格式（{{ kindLabelZh(workflowSourceKind) }}）不符的条目不可勾选
+                格式不符的条目不可勾选（当前：{{ kindLabelZh(workflowSourceKind) }}）
               </div>
-              <div v-if="libraryStore.currentDocs.length === 0" class="doc-empty-hint">
+              <div v-if="libraryStore.currentDocs.length === 0" class="compare-hint">
                 该文档库暂无文档
               </div>
               <div v-else class="doc-list">
@@ -735,27 +866,18 @@ function nodeStatusText(status) {
                   </div>
                   <span class="doc-list-icon" aria-hidden="true" />
                   <span class="doc-list-name">{{ doc.name }}</span>
+                  <span v-if="_fileExt(doc.name)" class="doc-list-ext">{{ _fileExt(doc.name) }}</span>
                   <span class="doc-list-size">{{ doc.size }}</span>
                 </div>
               </div>
             </template>
           </div>
 
-          <!-- 本地上传区域 -->
-          <div class="doc-local-section">
-            <!-- Electron：打开文件资源管理器 -->
-            <button
-              v-if="isElectronShell()"
-              class="config-btn"
-              style="margin-bottom: 10px; width: 100%;"
-              @click="handleElectronFilePick"
-            >
-              📂 打开文件资源管理器
-            </button>
-
+          <!-- 本地文件 tab -->
+          <div v-if="inputSource === 'local'" style="margin-top:10px;">
             <div
-              class="upload-zone"
-              @click="fileInputRef?.click()"
+              class="compare-upload-zone"
+              @click="isElectronShell() ? handleElectronFilePick() : fileInputRef?.click()"
               @drop="handleDrop"
               @dragover="handleDragOver"
             >
@@ -767,25 +889,26 @@ function nodeStatusText(status) {
                 style="display:none"
                 @change="handleFileSelect"
               />
-              <div class="upload-zone-icon" aria-hidden="true" />
-              <div class="upload-zone-text">点击或拖拽文件到此处</div>
-              <div class="upload-zone-hint">须与上文「源文件格式」一致（当前：{{ kindLabelZh(workflowSourceKind) }}）</div>
+              <FolderOpen :size="28" class="compare-upload-icon" />
+              <div class="compare-upload-text">点击或拖拽文件到此处</div>
+              <div class="compare-upload-hint">须与「源文件格式」一致（当前：{{ kindLabelZh(workflowSourceKind) }}）</div>
             </div>
-
             <!-- 已选本地文件 -->
-            <div v-if="displayedLocalFiles.length > 0" class="local-files-list">
+            <div v-if="displayedLocalFiles.length > 0" style="margin-top:8px;">
               <div
                 v-for="file in displayedLocalFiles"
                 :key="file.id"
-                class="local-file-item"
+                class="compare-file-selected"
+                style="margin-bottom:6px;"
               >
-                <span class="local-file-icon" aria-hidden="true" />
-                <span class="local-file-name">{{ file.name }}</span>
-                <span class="local-file-size">{{ _formatSize(file.size) }}</span>
-                <button
-                  class="local-file-remove"
-                  @click="workflowStore.removeLocalFile(file.id)"
-                >×</button>
+                <div class="compare-file-info">
+                  <FileText :size="14" class="compare-file-icon" />
+                  <span class="compare-file-name">{{ file.name }}</span>
+                  <span class="compare-doc-size">{{ _formatSize(file.size) }}</span>
+                </div>
+                <button class="compare-file-remove" @click="workflowStore.removeLocalFile(file.id)">
+                  <X :size="14" />
+                </button>
               </div>
             </div>
           </div>
@@ -805,6 +928,87 @@ function nodeStatusText(status) {
               <span class="selected-doc-icon" aria-hidden="true" />
               <span class="selected-doc-name">{{ doc.name }}</span>
               <span class="selected-doc-size">{{ doc.size }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== 对比节点：参考文件选择区域 ===== -->
+        <div v-if="workflowStore.selectedNode?.schemaKey === 'schema-compare-docs'" class="config-group">
+          <div class="config-group-label">参考文件</div>
+
+          <!-- Tab 切换 -->
+          <div class="compare-source-tabs">
+            <button class="compare-source-tab" :class="{ active: compareSource === 'local' }" @click="compareSource = 'local'">
+              <FolderOpen :size="14" /> 本地文件
+            </button>
+            <button class="compare-source-tab" :class="{ active: compareSource === 'library' }" @click="compareSource = 'library'">
+              <FileOutput :size="14" /> 文档库
+            </button>
+          </div>
+
+          <!-- 本地文件 tab -->
+          <div v-if="compareSource === 'local'" style="margin-top:10px;">
+            <div v-if="!compareRefLocalFile" class="compare-upload-zone" @click="handleCompareFilePick">
+              <FolderOpen :size="28" class="compare-upload-icon" />
+              <div class="compare-upload-text">点击选择参考文件</div>
+              <div class="compare-upload-hint">从本地文件中选择一份文档作为对比基准</div>
+            </div>
+            <div v-else class="compare-file-selected">
+              <div class="compare-file-info">
+                <FileText :size="16" class="compare-file-icon" />
+                <span class="compare-file-name">{{ compareRefLocalFile.name }}</span>
+              </div>
+              <button class="compare-file-remove" @click="compareRefLocalFile = null; updateConfig('referencePath', '')">
+                <X :size="14" />
+              </button>
+            </div>
+            <input ref="compareRefFileInputRef" type="file" :accept="localFileAccept" style="display:none" @change="handleCompareRefFileSelect" />
+          </div>
+
+          <!-- 文档库 tab：只选一个 -->
+          <div v-if="compareSource === 'library'" style="margin-top:10px;">
+            <!-- 内嵌参考文档库选择器 -->
+            <div class="field" style="margin-bottom:10px;">
+              <label class="field-label">参考文件文档库</label>
+              <select
+                class="config-select"
+                :value="compareRefSpaceIdComputed || ''"
+                @change="updateConfig('referenceSpaceId', $event.target.value)"
+              >
+                <option value="">请选择文档库</option>
+                <option
+                  v-for="space in libraryStore.spaces"
+                  :key="space.id"
+                  :value="space.id"
+                >{{ space.name }}</option>
+              </select>
+            </div>
+
+            <div v-if="isLoadingCompareLib" class="compare-loading">
+              <span class="loading-dots-sm"><span></span><span></span><span></span></span> 加载文档...
+            </div>
+            <div v-else-if="!compareRefLocalFile && !compareRefSelectedId" class="compare-empty">
+              <div v-if="compareRefDocs.length > 0" class="compare-doc-list">
+                <div
+                  v-for="doc in compareRefDocs" :key="doc.id"
+                  class="compare-doc-item"
+                  @click="compareRefSelectedId = doc.id; updateConfig('referenceDocId', doc.id); updateConfig('referencePath', '')"
+                >
+                  <FileText :size="14" class="compare-doc-icon" />
+                  <span class="compare-doc-name">{{ doc.name }}</span>
+                  <span class="compare-doc-size">{{ doc.size }}</span>
+                </div>
+              </div>
+              <div v-else class="compare-hint">请先选择一个参考文件文档库</div>
+            </div>
+            <div v-if="compareRefSelectedId" class="compare-file-selected">
+              <div class="compare-file-info">
+                <FileText :size="16" class="compare-file-icon" />
+                <span class="compare-file-name">{{ compareRefDocs.find(d => d.id === compareRefSelectedId)?.name }}</span>
+              </div>
+              <button class="compare-file-remove" @click="compareRefSelectedId = null; updateConfig('referenceDocId', null)">
+                <X :size="14" />
+              </button>
             </div>
           </div>
         </div>
@@ -1083,6 +1287,17 @@ function nodeStatusText(status) {
   color: var(--text-muted);
   font-size: 12px;
   flex-shrink: 0;
+}
+
+.doc-list-ext {
+  font-size: 10px;
+  color: var(--accent-primary, #7dd3fc);
+  background: rgba(125, 211, 252, 0.15);
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-left: 4px;
+  font-weight: 500;
 }
 
 /* Local upload section */
@@ -1617,6 +1832,151 @@ function nodeStatusText(status) {
 
 .exec-log-item.log-error {
   color: var(--accent-danger);
+}
+
+/* ===== 对比节点参考文件选择 ===== */
+.compare-source-tabs {
+  display: flex;
+  gap: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-primary);
+}
+.compare-source-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 7px 0;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.compare-source-tab:hover {
+  background: var(--bg-hover);
+}
+.compare-source-tab.active {
+  background: var(--accent-primary);
+  color: #fff;
+}
+.compare-upload-zone {
+  border: 2px dashed var(--border-primary);
+  border-radius: 10px;
+  padding: 28px 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.compare-upload-zone:hover {
+  border-color: var(--accent-primary);
+  background: var(--bg-hover);
+}
+.compare-upload-icon {
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.compare-upload-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.compare-upload-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+.compare-file-selected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.compare-file-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+.compare-file-icon {
+  color: var(--accent-primary);
+  flex-shrink: 0;
+}
+.compare-file-name {
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.compare-file-remove {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+.compare-file-remove:hover {
+  background: var(--bg-hover);
+  color: var(--accent-danger);
+}
+.compare-doc-list {
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+}
+.compare-doc-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.12s;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.compare-doc-item:hover {
+  background: var(--bg-hover);
+}
+.compare-doc-icon {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.compare-doc-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.compare-doc-size {
+  color: var(--text-secondary);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.compare-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 12px 0;
+}
+.compare-loading {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 10px 0;
 }
 
 </style>

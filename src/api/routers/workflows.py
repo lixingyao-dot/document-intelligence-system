@@ -171,9 +171,7 @@ def _get_output_config(nodes: List[WorkflowNode]) -> Dict[str, Any]:
             continue
         cv = dict(node.configValues or {})
         cv["_schemaKey"] = node.schemaKey
-        if node.schemaKey == "schema-save-excel":
-            cv.setdefault("outputFormat", "xlsx")
-        elif node.schemaKey == "schema-save-text":
+        if node.schemaKey == "schema-save-text":
             cv.setdefault("outputFormat", "txt")
         if not first_output:
             first_output = cv
@@ -821,9 +819,9 @@ async def list_output_formats():
     """返回支持的输出格式列表。"""
     return [
         {"code": "pdf", "name": "PDF"},
+        {"code": "docx", "name": "Word"},
         {"code": "md", "name": "Markdown"},
         {"code": "txt", "name": "纯文本"},
-        {"code": "xlsx", "name": "Excel"},
     ]
 
 
@@ -870,10 +868,10 @@ async def get_single_workflow(workflow_id: str):
     return wf
 
 
-@router.delete("/{workflow_id}", response_model=Dict[str, bool])
+@router.delete("/{workflow_id}")
 async def delete_user_workflow(workflow_id: str):
     """删除指定用户工作流。"""
     success = delete_workflow(workflow_id)
     if not success:
         raise HTTPException(status_code=404, detail="工作流不存在")
-    return True
+    return {"ok": True}

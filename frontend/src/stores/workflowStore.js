@@ -109,18 +109,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
       icon: '', iconClass: 'input',
       title: '文档输入', subtitle: '统一输入',
       fields: [
-        { key: '_hint_in', type: 'static', text: '选择支持的文件格式（可多选），然后从文档库勾选或上传待处理文档。' },
-        { key: 'inputFileKinds', label: '支持的文件格式', type: 'select-multiple',
-          options: [
-            { value: 'pdf', label: 'PDF (.pdf)' },
-            { value: 'md', label: 'Markdown (.md)' },
-            { value: 'txt', label: '纯文本 (.txt)' },
-            { value: 'docx', label: 'Word (.docx / .doc)' },
-            { value: 'xlsx', label: 'Excel (.xlsx / .xls)' }
-          ],
-          defaultValue: ['pdf', 'txt', 'md', 'docx', 'xlsx']
-        },
-        { key: 'spaceId', label: '输入文档库', type: 'library-selector' },
+        { key: '_hint_in', type: 'static', text: '支持所有格式（PDF、TXT、Markdown、Word、Excel）。从文档库勾选或本地选择待处理文档。' },
+        { key: 'inputFileKinds', type: 'hidden', defaultValue: ['pdf', 'txt', 'md', 'docx', 'xlsx'] },
         { key: 'skipExisting', label: '跳过已处理文档（有同名输出则跳过）', type: 'toggle' }
       ]
     },
@@ -147,8 +137,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       icon: '', iconClass: 'ai',
       title: '数据抽取', subtitle: '抽取节点',
       fields: [
-        { key: 'dataFormat', label: '输出格式', type: 'select',
-          options: [{ value: 'json', label: 'JSON' }, { value: 'csv', label: 'CSV' }, { value: 'table', label: '表格' }] },
+        { key: '_hint_data', type: 'static', text: '从文档中提取结构化数据，输出为 JSON 格式的记录列表。' },
         { key: 'extractFields', label: '要提取的字段', type: 'textarea', placeholder: '例: 名称,日期,金额（逗号分隔）' },
         { key: 'prompt', label: '提取规则描述', type: 'textarea' }
       ]
@@ -190,6 +179,26 @@ export const useWorkflowStore = defineStore('workflow', () => {
       fields: [
         { key: 'maxDepth', label: '最大层级', type: 'input', placeholder: '默认 3' },
         { key: 'prompt', label: '自定义规则', type: 'textarea' }
+      ]
+    },
+    'schema-compare-docs': {
+      icon: '', iconClass: 'ai',
+      title: '文档对比', subtitle: '对比节点',
+      fields: [
+        { key: '_hint_cmp', type: 'static', text: '将当前文档与「参考文件」逐项对比，输出差异报告。下方选择参考文件来源。' },
+        { key: 'compareMode', label: '对比模式', type: 'select',
+          options: [
+            { value: 'detailed', label: '详细对比（默认）' },
+            { value: 'brief', label: '摘要对比' },
+            { value: 'comprehensive', label: '全面深度对比' }
+          ] },
+        { key: 'summaryLevel', label: '报告详细度', type: 'select',
+          options: [
+            { value: 'brief', label: '精简（5条以内）' },
+            { value: 'detailed', label: '详细（按类别分组）' },
+            { value: 'comprehensive', label: '全面（逐项+影响分析）' }
+          ] },
+        { key: 'prompt', label: '自定义对比提示词', type: 'textarea', placeholder: '可选，支持变量: {file_a}, {file_b}, {content_a}, {content_b}' }
       ]
     },
     'schema-save': {
@@ -242,15 +251,6 @@ export const useWorkflowStore = defineStore('workflow', () => {
         { key: 'customEntityTypes', label: '自定义实体类型', type: 'textarea', placeholder: '可选：描述需识别的自定义类型，如「合同条款」「项目阶段」' },
         { key: 'aliasMap', label: '字段别名映射', type: 'textarea', placeholder: '可选：买方=甲方; 卖方=乙方（分号或换行分隔）' },
         { key: 'prompt', label: '补充抽取规则', type: 'textarea', placeholder: '对模型或规则的额外说明' }
-      ]
-    },
-    'schema-save-excel': {
-      icon: '', iconClass: 'output',
-      title: '保存 Excel', subtitle: '输出节点',
-      fields: [
-        { key: 'savePath', label: '相对路径或文件名前缀', type: 'input', placeholder: '可选' },
-        { key: 'sheetName', label: '工作表名称', type: 'input', placeholder: '默认 Sheet1' },
-        { key: 'prompt', label: '备注', type: 'textarea' }
       ]
     },
     'schema-save-text': {
@@ -311,6 +311,11 @@ export const useWorkflowStore = defineStore('workflow', () => {
         {
           icon: '', name: '结构化提纲生成', type: 'ai', title: '结构化提纲生成', body: '按层级输出目录提纲',
           schemaKey: 'schema-outline-generate',
+          schema: null
+        },
+        {
+          icon: '', name: '文档对比', type: 'ai', title: '文档对比', body: '对比两份文档，输出差异报告',
+          schemaKey: 'schema-compare-docs',
           schema: null
         }
       ]
@@ -376,7 +381,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       type: 'output',
       icon: '',
       title: '文档输出',
-      body: '选择下载或入库及目标格式（含 xlsx / txt / md 等）',
+      body: '选择下载或入库及目标格式（含 txt / md 等）',
       x: 290,
       y: 160,
       configValues: { ..._defaultOutputConfigValues() },
@@ -391,27 +396,11 @@ export const useWorkflowStore = defineStore('workflow', () => {
   function _migrateOutputNodeFromLegacy(node) {
     const cv = { ...(node.configValues || {}) }
     const sk = String(node.schemaKey || '')
-    if (sk === 'schema-save-excel') {
-      return {
-        ...node,
-        title: '文档输出',
-        body: '选择下载或入库及目标格式（含 xlsx / txt / md 等）',
-        schemaKey: SCHEMA_LIBRARY_OUTPUT,
-        schema: nodeSchemas.value[SCHEMA_LIBRARY_OUTPUT],
-        configValues: {
-          ..._defaultOutputConfigValues(),
-          outputFormat: 'xlsx',
-          sheetName: cv.sheetName,
-          savePath: cv.savePath,
-          outputMode: 'library'
-        }
-      }
-    }
     if (sk === 'schema-save-text') {
       return {
         ...node,
         title: '文档输出',
-        body: '选择下载或入库及目标格式（含 xlsx / txt / md 等）',
+        body: '选择下载或入库及目标格式（含 txt / md 等）',
         schemaKey: SCHEMA_LIBRARY_OUTPUT,
         schema: nodeSchemas.value[SCHEMA_LIBRARY_OUTPUT],
         configValues: {
@@ -430,7 +419,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       return {
         ...node,
         title: '文档输出',
-        body: '选择下载或入库及目标格式（含 xlsx / txt / md 等）',
+        body: '选择下载或入库及目标格式（含 txt / md 等）',
         configValues: merged,
         schema: nodeSchemas.value[SCHEMA_LIBRARY_OUTPUT]
       }
@@ -438,7 +427,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     return {
       ...node,
       title: '文档输出',
-      body: '选择下载或入库及目标格式（含 xlsx / txt / md 等）',
+      body: '选择下载或入库及目标格式（含 txt / md 等）',
       schemaKey: SCHEMA_LIBRARY_OUTPUT,
       schema: nodeSchemas.value[SCHEMA_LIBRARY_OUTPUT],
       configValues: { ..._defaultOutputConfigValues(), ...cv }

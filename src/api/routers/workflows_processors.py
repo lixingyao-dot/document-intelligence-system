@@ -100,7 +100,9 @@ def _process_node(content: str, file_name: str, node, config: SystemConfig, stat
         return _outline_generate_content(content, file_name, config_values)
     if schema_key in {"schema-entity-extraction"}:
         return _entity_extraction_content(content, file_name, config_values)
-    if schema_key in {"schema-save-excel", "schema-save-text"}:
+    if schema_key in {"schema-compare-docs"}:
+        return _compare_docs_content(content, file_name, config_values)
+    if schema_key in {"schema-save-text"}:
         return content
 
     # 无 schemaKey 时回退到历史标题匹配逻辑，保持向后兼容
@@ -117,6 +119,8 @@ def _process_node(content: str, file_name: str, node, config: SystemConfig, stat
         return _enhance_text_content(content, file_name, config_values)
     elif "脱敏" in node_title or "敏感信息" in node_title or "mask" in node_title_lower:
         return _sensitive_masking_content(content, file_name, config_values)
+    elif "对比" in node_title or "compare" in node_title_lower or "差异" in node_title:
+        return _compare_docs_content(content, file_name, config_values)
     elif "提纲" in node_title or "outline" in node_title_lower:
         return _outline_generate_content(content, file_name, config_values)
     # 处理类型无法识别时，不进行默认翻译，避免误处理
@@ -593,9 +597,7 @@ def _extract_data_content(content: str, file_name: str, config_values: Dict) -> 
         raise ValueError("大模型服务不可用，请在设置中配置 API Key 后重试")
 
     custom_prompt = str(config_values.get("prompt") or "").strip()
-    data_format = config_values.get("dataFormat", "json")
     extract_fields = config_values.get("extractFields", "")
-    is_json = data_format.lower() == "json"
 
     chunks = _split_text_for_llm(content)
     total = len(chunks)
@@ -609,14 +611,14 @@ def _extract_data_content(content: str, file_name: str, config_values: Dict) -> 
             if custom_prompt:
                 prompt = custom_prompt.replace("{content}", piece) if "{content}" in custom_prompt else f"{custom_prompt}\n{piece}"
             else:
-                prompt = f"请从以下文档中提取数据，格式为{data_format}\n"
+                prompt = "请从以下文档中提取数据，必须只输出 JSON 数组，不要输出其他文字。\n"
                 if extract_fields:
                     prompt += f"需要提取的字段：{extract_fields}\n"
                 if total > 1:
-                    prompt += f"【分段说明】这是第 {idx}/{total} 段，请只提取本段中的数据，不要输出其他段的内容。\n"
+                    prompt += f"【分段说明】这是第 {idx}/{total} 段，请只提取本段中的数据。\n"
                 prompt += f"文档内容：\n{piece}"
 
-            out_budget = max(4096, min(16384, len(piece) * 2 + 1024))
+            out_budget = max(8192, min(32768, len(piece) * 4 + 2048))
             response = service.chat(
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
@@ -624,31 +626,36 @@ def _extract_data_content(content: str, file_name: str, config_values: Dict) -> 
                 strip_markdown_output=False,
             )
             chunk_result = response if isinstance(response, str) else str(response)
-            if is_json:
-                try:
-                    import json as _cj
-                    parsed = _cj.loads(chunk_result)
-                    if isinstance(parsed, list):
-                        all_items.extend(parsed)
-                    elif isinstance(parsed, dict):
-                        all_items.append(parsed)
-                except (ValueError, TypeError):
-                    # 无法解析为 JSON，尝试提取 JSON 数组片段
-                    import re as _re, json as _cj2
-                    m = _re.search(r'\[[\s\S]*\]', chunk_result)
-                    if m:
+            try:
+                import json as _cj
+                parsed = _cj.loads(chunk_result)
+                if isinstance(parsed, list):
+                    all_items.extend(parsed)
+                elif isinstance(parsed, dict):
+                    all_items.append(parsed)
+            except (ValueError, TypeError):
+                import re as _re, json as _cj2
+                m = _re.search(r'\[[\s\S]*\]', chunk_result)
+                if m:
+                    raw = m.group(0)
+                    try:
+                        all_items.extend(_cj2.loads(raw))
+                    except (ValueError, TypeError):
+                        fixed = raw.rstrip().rstrip(',')
+                        if fixed.endswith(']'):
+                            fixed = fixed[:-1]
                         try:
-                            all_items.extend(_cj2.loads(m.group(0)))
+                            all_items.extend(_cj2.loads(fixed + ']'))
                         except (ValueError, TypeError):
-                            pass
-            else:
-                all_items.append(chunk_result)
+                            for obj_m in _re.finditer(r'\{[^{}]+\}', chunk_result):
+                                try:
+                                    all_items.append(_cj2.loads(obj_m.group(0)))
+                                except (ValueError, TypeError):
+                                    pass
 
-        if is_json and all_items:
+        if all_items:
             import json as _final
             return _final.dumps(all_items, ensure_ascii=False, indent=2)
-        elif all_items and not is_json:
-            return "".join(all_items)
         else:
             return f"[数据抽取] 未从「{file_name}」中提取到有效数据，请检查提取规则描述或字段配置。"
     except Exception as e:
@@ -880,3 +887,102 @@ def _outline_generate_content(content: str, file_name: str, config_values: Dict)
     except Exception as e:
         logger.error(f"提纲生成失败: {e}")
         raise ValueError(f"提纲生成失败：{e}") from e
+
+
+def _compare_docs_content(content: str, file_name: str, config_values: Dict) -> Optional[str]:
+    """对比两份文档，输出差异报告。主文档为上游 content，参考文档来自文档库或本地路径。"""
+    from pathlib import Path as _Path
+    from types import SimpleNamespace as _SN
+    from config import get_config as _get_cfg
+
+    ref_path = str(config_values.get("referencePath") or "").strip()
+    ref_doc_id = str(config_values.get("referenceDocId") or "").strip()
+    compare_mode = str(config_values.get("compareMode") or "detailed").strip()
+    custom_prompt = str(config_values.get("prompt") or "").strip()
+    summary_level = str(config_values.get("summaryLevel") or "detailed").strip()
+
+    # 优先使用文档库中的文档 ID
+    if ref_doc_id and not ref_path:
+        from api.routers.workflows import _resolve_doc_path
+        resolved = _resolve_doc_path(ref_doc_id, _get_cfg())
+        if resolved:
+            ref_path = resolved
+
+    if not ref_path:
+        raise ValueError("文档对比节点缺少配置：请从文档库或本地文件选择一份参考文件")
+
+    ref_file = _Path(ref_path)
+    if not ref_file.is_file():
+        raise ValueError(f"参考文件不存在: {ref_path}")
+
+    ref_content = ""
+    try:
+        from core.orchestrator.executor import TaskExecutor
+        from core.orchestrator.task_spec import FileType
+        executor = TaskExecutor(_get_cfg())
+        ft = FileType(ref_file.suffix.lstrip(".").lower())
+        parsed = executor.parse_documents([
+            _SN(path=str(ref_file), name=ref_file.name, file_type=ft)
+        ])
+        ref_content = parsed.get(str(ref_file), "")
+    except Exception:
+        # 回退：直接按文本读取
+        try:
+            ref_content = ref_file.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            ref_content = ref_file.read_text(encoding="gbk", errors="replace")
+
+    if not ref_content.strip():
+        raise ValueError(f"无法读取参考文件内容: {ref_file.name}")
+
+    service = _get_llm_service()
+    if not service:
+        raise ValueError("文档对比失败：大模型服务不可用，请在设置中配置 API Key 后重试")
+
+    level_hint = {
+        "brief": "只列出关键差异（5条以内）",
+        "detailed": "列出所有差异，按类别分组",
+        "comprehensive": "逐项详细对比，包含差异的影响分析和修改建议",
+    }.get(summary_level, "列出所有差异，按类别分组")
+
+    if custom_prompt:
+        prompt = custom_prompt.replace("{file_a}", file_name).replace("{file_b}", ref_file.name)
+        prompt = prompt.replace("{content_a}", _text_sample(content))
+        prompt = prompt = (
+            custom_prompt.replace("{file_a}", file_name)
+            .replace("{file_b}", ref_file.name)
+            .replace("{content_a}", _text_sample(content))
+            .replace("{content_b}", _text_sample(ref_content))
+        )
+    else:
+        prompt = (
+            f"请对比以下两份文档并输出差异报告。\n\n"
+            f"**文档 A（当前文件）：** {file_name}\n"
+            f"**文档 B（参考文件）：** {ref_file.name}\n\n"
+            f"**对比模式：** {compare_mode}\n"
+            f"**详细程度：** {level_hint}\n\n"
+            f"--- 文档 A 内容 ---\n{_text_sample(content)}\n\n"
+            f"--- 文档 B 内容 ---\n{_text_sample(ref_content)}\n\n"
+            f"请按以下结构输出对比结果：\n\n"
+            f"## 对比概览\n"
+            f"简要说明两份文档的基本信息和整体差异概况。\n\n"
+            f"## 差异详情\n"
+            f"逐项列出所有差异，每条差异包含：\n"
+            f"- **差异位置**：涉及的章节/段落\n"
+            f"- **文档A内容**：...\n"
+            f"- **文档B内容**：...\n"
+            f"- **差异类型**：新增 / 删除 / 修改 / 表述差异\n\n"
+            f"## 总结\n"
+            f"归纳主要差异点，给出核心变化总结。"
+        )
+
+    try:
+        response = service.chat(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            strip_markdown_output=False,
+        )
+        return response if isinstance(response, str) else str(response)
+    except Exception as e:
+        logger.error(f"文档对比失败: {e}")
+        raise ValueError(f"文档对比失败：{e}") from e

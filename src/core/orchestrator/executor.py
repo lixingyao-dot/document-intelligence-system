@@ -7,6 +7,7 @@ from typing import Optional, List, Any, Dict
 import csv
 import importlib
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -140,9 +141,9 @@ class TaskExecutor:
         execution_id = str(task_spec.parameters.get("execution_id") or "workflow")
 
         output_format = str(output_config.get("outputFormat") or "pdf").lower()
-        if output_format in ("excel", "xls"):
+        if output_format in ("excel", "xls", "xlsx"):
             output_format = "xlsx"
-        if output_format not in ("md", "txt", "pdf", "xlsx"):
+        if output_format not in ("md", "txt", "pdf", "docx", "xlsx"):
             output_format = "pdf"
 
         naming_rule = str(output_config.get("namingRule") or "{original_name}_out")
@@ -339,6 +340,9 @@ class TaskExecutor:
                     from utils.pdf_generator import text_to_pdf
                     text_to_pdf(display_content, str(out_path), title=out_name)
                     mime_type = "application/pdf"
+                elif output_format == "docx":
+                    self._write_docx_output(display_content, out_path, out_name)
+                    mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 elif output_format == "xlsx":
                     self._write_xlsx_output(display_content, out_path, str(output_config.get("sheetName") or "Sheet1"))
                     mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -411,6 +415,51 @@ class TaskExecutor:
             "intermediate_files": intermediate_files,
             "result_content": result_content if not output_nodes else None,
         }
+
+    @staticmethod
+    def _write_docx_output(content: str, out_path: Path, title: str = "") -> None:
+        """将文本内容写入 Word 文档。"""
+        from docx import Document
+        from docx.shared import Pt
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+        doc = Document()
+
+        # 添加标题
+        if title:
+            heading = doc.add_heading(title, level=1)
+            heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        # 按行写入内容
+        for line in content.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                doc.add_paragraph("")
+                continue
+
+            # 识别标题样式（# 开头）
+            if stripped.startswith("######"):
+                doc.add_paragraph(stripped.lstrip("#").strip(), style="Heading 6")
+            elif stripped.startswith("#####"):
+                doc.add_paragraph(stripped.lstrip("#").strip(), style="Heading 5")
+            elif stripped.startswith("####"):
+                doc.add_paragraph(stripped.lstrip("#").strip(), style="Heading 4")
+            elif stripped.startswith("###"):
+                doc.add_paragraph(stripped.lstrip("#").strip(), style="Heading 3")
+            elif stripped.startswith("##"):
+                doc.add_paragraph(stripped.lstrip("#").strip(), style="Heading 2")
+            elif stripped.startswith("#"):
+                doc.add_paragraph(stripped.lstrip("#").strip(), style="Heading 1")
+            # 识别列表项
+            elif stripped.startswith("- ") or stripped.startswith("* "):
+                doc.add_paragraph(stripped[2:], style="List Bullet")
+            elif re.match(r"^\d+[\.\)]\s", stripped):
+                doc.add_paragraph(re.sub(r"^\d+[\.\)]\s*", "", stripped), style="List Number")
+            else:
+                doc.add_paragraph(stripped)
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(out_path))
 
     @staticmethod
     def _to_excel_cell(value: Any) -> Any:

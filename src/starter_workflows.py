@@ -15,8 +15,8 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _input_node(file_kind: str = "pdf") -> dict:
-    """通用输入节点模板。"""
+def _input_node() -> dict:
+    """通用输入节点模板，默认支持所有格式。"""
     return {
         "id": "n_doc_input",
         "type": "input",
@@ -24,7 +24,7 @@ def _input_node(file_kind: str = "pdf") -> dict:
         "body": "选择源文件格式与文档来源",
         "schemaKey": "schema-document-input",
         "configValues": {
-            "inputFileKind": file_kind,
+            "inputFileKinds": ["pdf", "txt", "md", "docx", "xlsx"],
             "inputSource": "library",
             "spaceId": None,
             "skipExisting": False,
@@ -61,7 +61,7 @@ def build_starter_workflows(now: Optional[str] = None) -> Dict[str, Any]:
         "created_at": ts,
         "updated_at": ts,
         "nodes": [
-            _input_node("pdf"),
+            _input_node(),
             {
                 "id": "n_ai_translate",
                 "type": "ai",
@@ -94,7 +94,7 @@ def build_starter_workflows(now: Optional[str] = None) -> Dict[str, Any]:
         "created_at": ts,
         "updated_at": ts,
         "nodes": [
-            _input_node("pdf"),
+            _input_node(),
             {
                 "id": "n_extract",
                 "type": "ai",
@@ -128,7 +128,7 @@ def build_starter_workflows(now: Optional[str] = None) -> Dict[str, Any]:
         "created_at": ts,
         "updated_at": ts,
         "nodes": [
-            _input_node("pdf"),
+            _input_node(),
             {
                 "id": "n_data_extract",
                 "type": "ai",
@@ -162,7 +162,7 @@ def build_starter_workflows(now: Optional[str] = None) -> Dict[str, Any]:
         "created_at": ts,
         "updated_at": ts,
         "nodes": [
-            _input_node("pdf"),
+            _input_node(),
             {
                 "id": "n_entity",
                 "type": "ai",
@@ -197,7 +197,7 @@ def build_starter_workflows(now: Optional[str] = None) -> Dict[str, Any]:
         "created_at": ts,
         "updated_at": ts,
         "nodes": [
-            _input_node("pdf"),
+            _input_node(),
             {
                 "id": "n_analyze",
                 "type": "ai",
@@ -237,7 +237,7 @@ def build_starter_workflows(now: Optional[str] = None) -> Dict[str, Any]:
         "created_at": ts,
         "updated_at": ts,
         "nodes": [
-            _input_node("md"),
+            _input_node(),
             {
                 "id": "n_enhance",
                 "type": "ai",
@@ -276,7 +276,7 @@ def build_starter_workflows(now: Optional[str] = None) -> Dict[str, Any]:
         "created_at": ts,
         "updated_at": ts,
         "nodes": [
-            _input_node("pdf"),
+            _input_node(),
             {
                 "id": "n_masking",
                 "type": "ai",
@@ -315,7 +315,7 @@ def build_starter_workflows(now: Optional[str] = None) -> Dict[str, Any]:
         "created_at": ts,
         "updated_at": ts,
         "nodes": [
-            _input_node("pdf"),
+            _input_node(),
             {
                 "id": "n_outline",
                 "type": "ai",
@@ -349,6 +349,51 @@ def build_starter_workflows(now: Optional[str] = None) -> Dict[str, Any]:
         "config": {},
     }
 
+    # ── 9. 文档对比 ─────────────────────────────────────────────
+    wf_compare = {
+        "id": "wf_starter_compare",
+        "name": "文档对比流",
+        "icon": "",
+        "type": "custom",
+        "created_at": ts,
+        "updated_at": ts,
+        "nodes": [
+            _input_node(),
+            {
+                "id": "n_compare",
+                "type": "ai",
+                "title": "文档对比",
+                "body": "对比两份文档，输出差异报告",
+                "schemaKey": "schema-compare-docs",
+                "configValues": {
+                    "referencePath": "",
+                    "compareMode": "detailed",
+                    "summaryLevel": "detailed",
+                    "prompt": (
+                        "请对比以下两份文档并输出差异报告。\n\n"
+                        "**文档 A（当前文件）：** {file_a}\n"
+                        "**文档 B（参考文件）：** {file_b}\n\n"
+                        "--- 文档 A 内容 ---\n{content_a}\n\n"
+                        "--- 文档 B 内容 ---\n{content_b}\n\n"
+                        "请按以下结构输出对比结果：\n\n"
+                        "## 对比概览\n"
+                        "简要说明两份文档的基本信息和整体差异概况。\n\n"
+                        "## 差异详情\n"
+                        "逐项列出所有差异，每条差异包含：\n"
+                        "- **差异位置**：涉及的章节/段落\n"
+                        "- **文档A内容**：...\n"
+                        "- **文档B内容**：...\n"
+                        "- **差异类型**：新增 / 删除 / 修改 / 表述差异\n\n"
+                        "## 总结\n"
+                        "归纳主要差异点，给出核心变化总结。"
+                    ),
+                },
+            },
+            _output_node("compared", "md"),
+        ],
+        "config": {},
+    }
+
     return {
         "wf_starter_translation": wf_translate,
         "wf_starter_summary": wf_summary,
@@ -358,6 +403,7 @@ def build_starter_workflows(now: Optional[str] = None) -> Dict[str, Any]:
         "wf_starter_enhance": wf_enhance,
         "wf_starter_masking": wf_masking,
         "wf_starter_outline": wf_outline,
+        "wf_starter_compare": wf_compare,
     }
 
 

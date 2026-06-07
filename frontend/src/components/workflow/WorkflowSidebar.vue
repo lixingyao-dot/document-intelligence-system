@@ -29,10 +29,26 @@ function handleNewWorkflow() {
   workflowStore.createNewWorkflow()
 }
 
-async function handleDeleteWorkflow(e, workflowId) {
+const showDeleteConfirm = ref(false)
+const deleteTargetId = ref(null)
+
+function handleDeleteWorkflow(e, workflowId) {
   e.stopPropagation()
-  if (!confirm('确定删除该工作流？')) return
-  await workflowStore.deleteWorkflow(workflowId)
+  deleteTargetId.value = workflowId
+  showDeleteConfirm.value = true
+}
+
+async function confirmDelete() {
+  if (deleteTargetId.value) {
+    await workflowStore.deleteWorkflow(deleteTargetId.value)
+  }
+  showDeleteConfirm.value = false
+  deleteTargetId.value = null
+}
+
+function cancelDelete() {
+  showDeleteConfirm.value = false
+  deleteTargetId.value = null
 }
 
 function handleAddNode(item) {
@@ -185,6 +201,20 @@ function onToolboxDragStart(e, item) {
       </template>
     </template>
   </aside>
+
+  <!-- 自定义删除确认弹窗 -->
+  <Teleport to="body">
+    <div v-if="showDeleteConfirm" class="wf-modal-overlay" @click.self="cancelDelete">
+      <div class="wf-modal-dialog">
+        <div class="wf-modal-title">删除工作流</div>
+        <div class="wf-modal-body">确定要删除该工作流吗？此操作无法撤销。</div>
+        <div class="wf-modal-actions">
+          <button class="wf-modal-btn wf-modal-btn-cancel" @click="cancelDelete">取消</button>
+          <button class="wf-modal-btn wf-modal-btn-confirm" @click="confirmDelete">确定</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -367,5 +397,65 @@ function onToolboxDragStart(e, item) {
 
 .toolbox-item-main:active {
   cursor: grabbing;
+}
+
+/* 删除确认弹窗 */
+.wf-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.wf-modal-dialog {
+  background: var(--bg-card, #1e1e2e);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 24px 28px;
+  min-width: 340px;
+  max-width: 420px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+.wf-modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary, #fff);
+  margin-bottom: 10px;
+}
+.wf-modal-body {
+  font-size: 14px;
+  color: var(--text-secondary, #aaa);
+  line-height: 1.6;
+  margin-bottom: 22px;
+}
+.wf-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.wf-modal-btn {
+  padding: 8px 22px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.2s;
+}
+.wf-modal-btn-cancel {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary, #aaa);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+.wf-modal-btn-cancel:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.wf-modal-btn-confirm {
+  background: #e5484d;
+  color: #fff;
+}
+.wf-modal-btn-confirm:hover {
+  background: #d63a3f;
 }
 </style>
