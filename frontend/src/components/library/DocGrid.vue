@@ -6,6 +6,34 @@ import libraryApi from '../../api/library'
 
 const libraryStore = useLibraryStore()
 
+// ==================== 文件预览 ====================
+const previewDoc = ref(null)
+const previewData = ref(null)
+const previewLoading = ref(false)
+const previewError = ref('')
+
+async function openPreview(doc, event) {
+  event.stopPropagation()
+  previewDoc.value = doc
+  previewData.value = null
+  previewError.value = ''
+  previewLoading.value = true
+  try {
+    const res = await libraryApi.previewFile(doc.id, libraryStore.currentSpaceId)
+    previewData.value = res
+  } catch (e) {
+    previewError.value = e.message || '预览失败'
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+function closePreview() {
+  previewDoc.value = null
+  previewData.value = null
+  previewError.value = ''
+}
+
 // ==================== 文件选择 ====================
 function handleDocClick(docId, event) {
   libraryStore.toggleDocSelect(docId)
@@ -289,6 +317,13 @@ function getFileIcon(extension) {
           <span v-else>↓</span>
         </button>
 
+        <!-- Preview Button -->
+        <button
+          class="doc-preview-btn"
+          title="预览文档"
+          @click="openPreview(doc, $event)"
+        >👁</button>
+
         <!-- File Icon -->
         <div class="doc-icon" v-html="getFileIconSvg(doc.file_extension)"></div>
 
@@ -374,6 +409,49 @@ function getFileIcon(extension) {
               <span v-if="isBatchDeleting" class="btn-spinner"></span>
               <span v-else>确认删除</span>
             </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- ==================== 文件预览面板 ==================== -->
+    <Teleport to="body">
+      <div class="modal-overlay" :class="{ active: previewDoc }" @click.self="closePreview">
+        <div class="preview-panel">
+          <div class="preview-header">
+            <span class="preview-title">{{ previewDoc?.name }}</span>
+            <button class="modal-close" @click="closePreview">×</button>
+          </div>
+          <div class="preview-body">
+            <div v-if="previewLoading" class="preview-loading">加载预览中...</div>
+            <div v-else-if="previewError" class="preview-error">{{ previewError }}</div>
+            <template v-else-if="previewData">
+              <!-- 文本类预览 (txt/md/docx/pdf) -->
+              <div v-if="previewData.type === 'text'" class="preview-text">
+                <pre class="preview-pre">{{ previewData.content }}</pre>
+                <div v-if="previewData.truncated" class="preview-truncated">
+                  仅显示前部分内容（共 {{ previewData.total_lines || previewData.total_paragraphs || previewData.total_pages }} 行/段/页）
+                </div>
+              </div>
+              <!-- 表格类预览 (xlsx) -->
+              <div v-else-if="previewData.type === 'table'" class="preview-table-wrap">
+                <table class="preview-table">
+                  <thead>
+                    <tr>
+                      <th v-for="(h, i) in previewData.headers" :key="i">{{ h }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(row, ri) in previewData.rows" :key="ri">
+                      <td v-for="(cell, ci) in row" :key="ci">{{ cell }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div v-if="previewData.truncated" class="preview-truncated">
+                  仅显示前 {{ previewData.rows.length }} 行（共 {{ previewData.total_rows }} 行）
+                </div>
+              </div>
+            </template>
           </div>
         </div>
       </div>
@@ -682,7 +760,7 @@ function getFileIcon(extension) {
 .doc-delete-btn {
   position: absolute;
   top: 12px;
-  right: 42px;
+  right: 40px;
   width: 22px;
   height: 22px;
   display: flex;
@@ -713,7 +791,7 @@ function getFileIcon(extension) {
 .doc-download-btn {
   position: absolute;
   top: 12px;
-  right: 12px;
+  right: 68px;
   width: 22px;
   height: 22px;
   display: flex;
@@ -1033,5 +1111,117 @@ function getFileIcon(extension) {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* ===== 预览按钮 ===== */
+.doc-preview-btn {
+  position: absolute;
+  top: 12px;
+  right: 96px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: rgba(125, 211, 252, 0.15);
+  color: var(--text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.doc-card:hover .doc-preview-btn {
+  opacity: 1;
+}
+.doc-preview-btn:hover {
+  background: rgba(125, 211, 252, 0.3);
+}
+
+/* ===== 预览面板 ===== */
+.preview-panel {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  width: 680px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  color: #1e293b;
+}
+.preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+.preview-title {
+  font-weight: 600;
+  color: #1e293b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preview-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+.preview-loading, .preview-error {
+  text-align: center;
+  padding: 32px;
+  color: #64748b;
+}
+.preview-error { color: #ef4444; }
+.preview-pre {
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #1e293b;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+  background: #f8fafc;
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+}
+.preview-truncated {
+  margin-top: 10px;
+  font-size: 11px;
+  color: #94a3b8;
+  text-align: center;
+  font-style: italic;
+}
+.preview-table-wrap {
+  overflow-x: auto;
+}
+.preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.preview-table th, .preview-table td {
+  padding: 6px 10px;
+  border: 1px solid #e2e8f0;
+  text-align: left;
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.preview-table th {
+  background: #f1f5f9;
+  color: #1e293b;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+.preview-table td {
+  color: #334155;
 }
 </style>

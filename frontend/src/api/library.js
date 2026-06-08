@@ -47,6 +47,20 @@ export default {
     return client.post('/library/docs/delete-batch', { doc_ids: docIds })
   },
 
+  /** 预览文档内容 */
+  async previewFile(fileId, spaceId) {
+    const token = localStorage.getItem('auth_token') || ''
+    const base = import.meta.env.VITE_API_BASE_URL || ''
+    const res = await fetch(`${base}/api/files/preview?file_id=${fileId}&space_id=${spaceId}`, {
+      headers: token ? { Authorization: token } : {},
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(text || `预览失败 (${res.status})`)
+    }
+    return res.json()
+  },
+
   /** 下载文档（带鉴权） */
   async downloadDoc(docId, fileName) {
     const token = localStorage.getItem('auth_token') || ''

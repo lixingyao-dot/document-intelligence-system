@@ -21,6 +21,7 @@ from core.storage import (
     oss_storage_enabled,
 )
 from db.auth_context import resolve_user_from_authorization
+from utils.desktop_runtime import get_desktop_local_library
 from db.session_repository import (
     add_session_file,
     delete_session_file,
@@ -377,6 +378,88 @@ async def download_by_path(path: str, authorization: Optional[str] = Header(defa
         filename=file_path.name,
         media_type="application/octet-stream",
     )
+
+
+@download_router.get("/preview")
+async def preview_file(file_id: str, space_id: str, authorization: Optional[str] = Header(default=None)):
+    """预览文档库文件内容（前 N 行文本或表格）。file_id 为文档库中的 UUID。"""
+    cfg = load_config()
+    current_user = _resolve_current_user(authorization, cfg)
+
+    # 从文档库获取文件信息
+    lib = get_desktop_local_library()
+    if not lib:
+        raise HTTPException(status_code=500, detail="文档库未初始化")
+
+    doc_info = lib.get_doc(space_id, file_id)
+    if not doc_info:
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    file_name = doc_info.get("file_name", "")
+    # 获取文件实际路径
+    storage_key = doc_info.get("storage_key") or ""
+    local_path = doc_info.get("local_path") or ""
+
+    file_path = Path(local_path) if local_path and Path(local_path).exists() else None
+    if not file_path and storage_key and oss_storage_enabled(cfg):
+        try:
+            cache_path = Path(cfg.temp_dir) / "oss_cache" / storage_key
+            file_path = download_file_to_local(storage_key, cache_path, config=cfg)
+        except Exception:
+            pass
+    if not file_path or not file_path.exists():
+        raise HTTPException(status_code=404, detail="文件无法读取")
+
+    ext = file_path.suffix.lower()
+    max_lines = 50
+    max_table_rows = 20
+
+    try:
+        if ext in (".txt", ".md"):
+            text = file_path.read_text(encoding="utf-8", errors="replace")
+            lines = text.splitlines()[:max_lines]
+            return {"type": "text", "content": "\n".join(lines), "total_lines": len(text.splitlines()), "truncated": len(text.splitlines()) > max_lines}
+
+        elif ext in (".xlsx", ".xls"):
+            from openpyxl import load_workbook
+            wb = load_workbook(str(file_path), read_only=True, data_only=True)
+            ws = wb.active
+            rows = []
+            for idx, row in enumerate(ws.iter_rows(max_row=max_table_rows + 1, values_only=True)):
+                rows.append([str(c) if c is not None else "" for c in row])
+            wb.close()
+            total_rows = ws.max_row or 0
+            return {"type": "table", "headers": rows[0] if rows else [], "rows": rows[1:], "total_rows": total_rows, "truncated": total_rows > max_table_rows}
+
+        elif ext == ".docx":
+            from docx import Document
+            doc = Document(str(file_path))
+            paragraphs = []
+            for i, para in enumerate(doc.paragraphs[:max_lines]):
+                if para.text.strip():
+                    style = para.style.name if para.style else ""
+                    paragraphs.append({"text": para.text, "style": style})
+            return {"type": "text", "content": "\n".join(p["text"] for p in paragraphs), "total_paragraphs": len(doc.paragraphs), "truncated": len(doc.paragraphs) > max_lines}
+
+        elif ext == ".pdf":
+            try:
+                import pdfplumber
+                text_parts = []
+                with pdfplumber.open(str(file_path)) as pdf:
+                    total_pages = len(pdf.pages)
+                    for page in pdf.pages[:3]:
+                        page_text = page.extract_text() or ""
+                        text_parts.append(page_text)
+                    full_text = "\n---\n".join(text_parts)
+                return {"type": "text", "content": full_text[:8000], "total_pages": total_pages, "truncated": total_pages > 3}
+            except ImportError:
+                return {"type": "text", "content": "[PDF 预览需要安装 pdfplumber]", "total_pages": 0, "truncated": False}
+
+        else:
+            return {"type": "text", "content": f"[{ext} 格式暂不支持预览]", "total_lines": 0, "truncated": False}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"预览失败: {e}")
 
 
 # ============ 临时文件上传（不上传数据库）============

@@ -232,6 +232,7 @@ def _doc_public(doc_id: str, d: Dict[str, Any]) -> Dict[str, Any]:
         "mime_type": d.get("mime_type"),
         "file_extension": d.get("file_extension"),
         "storage_key": d.get("storage_key"),
+        "local_path": d.get("local_path", ""),
         "blob_url": None,
         "created_at": d.get("created_at", ""),
         "updated_at": d.get("updated_at", ""),
