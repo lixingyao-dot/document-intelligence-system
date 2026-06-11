@@ -1126,9 +1126,10 @@ class ConnectionManager:
         await websocket.accept()
         self.active_connections[session_id] = websocket
     
-    def disconnect(self, session_id: str):
+    def disconnect(self, session_id: str, websocket: WebSocket = None):
         if session_id in self.active_connections:
-            del self.active_connections[session_id]
+            if websocket is None or self.active_connections[session_id] == websocket:
+                del self.active_connections[session_id]
     
     async def send_text(self, session_id: str, text: str):
         if session_id in self.active_connections:
@@ -1708,4 +1709,4 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
         import traceback; traceback.print_exc()
         await manager.send_json(session_id, {"type": "error", "message": str(e)})
     finally:
-        manager.disconnect(session_id)
+        manager.disconnect(session_id, websocket)

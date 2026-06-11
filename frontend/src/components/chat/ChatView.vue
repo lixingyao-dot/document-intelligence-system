@@ -47,6 +47,19 @@ const showProgress = computed(() => sessionStore.showProgressBar)
 const progressVal = computed(() => sessionStore.progressValue)
 const progressMsg = computed(() => sessionStore.progressMessage)
 
+// 最后一条是用户消息，说明后端尚未返回助手回复（正在处理或等待中）
+const waitingForReply = computed(() => {
+  const msgs = sessionStore.messages
+  if (msgs.length === 0) return false
+  const last = msgs[msgs.length - 1]
+  const hasLoading = msgs.some(m => m.role === 'assistant' && m.isLoading)
+  const result = last.role === 'user' && !hasLoading
+  if (result) {
+    console.log('[waitingForReply] true — 最后一条是 user, msgs:', msgs.map(m => ({ role: m.role, isLoading: m.isLoading })))
+  }
+  return result
+})
+
 const chatModes = ['default_conversation', 'document_understanding', 'document_editing', 'mixed']
 const modeLabels = {
   default_conversation: '默认对话',
@@ -600,7 +613,7 @@ function userMessageAttachments(msg) {
                 </div>
               </template>
               <!-- Loading 动画 -->
-              <div v-if="msg.isLoading" class="typing-indicator">
+              <div v-if="msg.isLoading || (sessionStore.isStreaming && index === sessionStore.messages.length - 1 && msg.role === 'assistant')" class="typing-indicator">
                 <span class="typing-dot"></span>
                 <span class="typing-dot"></span>
                 <span class="typing-dot"></span>
@@ -803,6 +816,25 @@ function userMessageAttachments(msg) {
                     </div>
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 正在回答：最后一条是用户消息，后端仍在处理时显示转圈 -->
+        <div
+          v-if="waitingForReply"
+          class="message assistant"
+        >
+          <div class="message-avatar role-assistant" aria-hidden="true">
+            <Bot :size="20" :stroke-width="2" />
+          </div>
+          <div class="message-content">
+            <div class="message-bubble">
+              <div class="typing-indicator">
+                <span class="typing-dot"></span>
+                <span class="typing-dot"></span>
+                <span class="typing-dot"></span>
               </div>
             </div>
           </div>

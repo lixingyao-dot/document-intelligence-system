@@ -519,6 +519,10 @@ export const useSessionStore = defineStore('session', () => {
   let loadingMsgId = null // 当前 loading 消息的 ID
   let isSending = false // 标记是否正在发送消息
 
+  // 记录哪些会话仍有后端请求正在处理（sessionId → true）
+  // 切换会话后再切回时，据此恢复 loading 气泡
+  const _pendingSessions = new Map()
+
   /** 移除 WebSocket 流式时的「三个点」loading 气泡（chunk/done/error/断线均需调用） */
   function removeAssistantLoadingBubble() {
     if (loadingMsgId === null) return
@@ -835,12 +839,37 @@ export const useSessionStore = defineStore('session', () => {
   async function selectSession(sessionId) {
     if (currentSessionId.value === sessionId) return
 
+    // 在切换前，先将当前会话的本地消息保存到 localStorage 缓存
+    if (currentSessionId.value && messages.value.length > 0) {
+      persistMessages(currentSessionId.value, messages.value)
+    }
+
+    // 如果当前会话仍在处理中（isStreaming/isSending），标记为 pending
+    if (currentSessionId.value && (isStreaming.value || isSending)) {
+      _pendingSessions.set(currentSessionId.value, true)
+    }
+
+    // 记录旧会话 ID，用于后续 loadMessages 时判断是否仍是目标会话
+    const prevSessionId = currentSessionId.value
+
+    // 关闭旧 WebSocket，但先手动重置状态（不依赖 onclose 回调）
     const prevWs = ws.value
     if (prevWs) {
       prevWs.onclose = null
       prevWs.onerror = null
-      prevWs.close()
+      try {
+        prevWs.close()
+      } catch (_) {}
     }
+    // 手动重置旧连接的状态，防止闭包变量残留
+    pendingResolve = null
+    pendingResultData = null
+    loadingMsgId = null
+    isSending = false
+    isStreaming.value = false
+    ws.value = null
+    wsSessionId.value = null
+    wsConnecting.value = false
 
     currentSessionId.value = sessionId
 
@@ -855,8 +884,29 @@ export const useSessionStore = defineStore('session', () => {
     const cachedMsgs = hydrateCachedMessages(sessionId)
     if (cachedMsgs?.length > 0) {
       messages.value = cachedMsgs
-    } else {
-      loadMessages(sessionId).catch(console.error)
+    }
+    // 无论是否有缓存，都从服务器加载最新消息（会覆盖缓存）
+    try {
+      await loadMessages(sessionId)
+    } catch (e) {
+      console.warn('[selectSession] loadMessages 失败:', e.message)
+    }
+
+    // 切回时：如果该会话仍标记为 pending（后端还在处理），恢复 loading 气泡
+    if (_pendingSessions.has(sessionId) && currentSessionId.value === sessionId) {
+      isSending = true
+      const lastMsg = messages.value[messages.value.length - 1]
+      const hasChunkOrProgress = lastMsg && (lastMsg.role === 'assistant' || lastMsg.isProgressMessage) && !lastMsg.isLoading
+      
+      if (!hasChunkOrProgress) {
+        // 后端仍在处理（且没有正在显示的文本块/进度），仅恢复 isStreaming
+        // 不显式插入 isLoading 气泡，让 ChatView.vue 的 waitingForReply 计算属性自动接管显示“转圈”
+        isStreaming.value = true
+        console.log('[selectSession] 恢复 loading 状态（依赖 waitingForReply）, sessionId:', sessionId)
+      } else {
+        // 无论是有文本块还是进度条，只要还在 pending，就保持 streaming 状态，让发送按钮转圈禁用
+        isStreaming.value = true
+      }
     }
 
     // 从数据库加载文件列表
@@ -883,15 +933,22 @@ export const useSessionStore = defineStore('session', () => {
         if (wsPrev) {
           wsPrev.onclose = null
           wsPrev.onerror = null
-          wsPrev.close()
+          try { wsPrev.close() } catch (_) {}
         }
+        pendingResolve = null
+        pendingResultData = null
+        loadingMsgId = null
+        isSending = false
+        isStreaming.value = false
+        ws.value = null
+        wsSessionId.value = null
+        wsConnecting.value = false
         connectWebSocket()
         const cachedMsgs = hydrateCachedMessages(nextSession.session_id)
         if (cachedMsgs?.length > 0) {
           messages.value = cachedMsgs
-        } else {
-          loadMessages(nextSession.session_id).catch(console.error)
         }
+        loadMessages(nextSession.session_id).catch(console.error)
       } else {
         currentSessionId.value = null
         messages.value = []
@@ -920,7 +977,9 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   function persistMessages(sessionId, msgs) {
-    saveMessagesCache(sessionId, msgs)
+    // 过滤掉临时的 isLoading 气泡，它们是瞬态 UI 状态不应持久化
+    const toSave = (msgs || []).filter(m => !m.isLoading)
+    saveMessagesCache(sessionId, toSave)
     if (!sessionId) return
     const iso = new Date().toISOString()
     const idx = sessions.value.findIndex(s => s.session_id === sessionId)
@@ -935,8 +994,36 @@ export const useSessionStore = defineStore('session', () => {
       const res = await messageApi.list(sessionId)
       const msgs = (Array.isArray(res) ? res : []).map(normalizeMessageForResultDisplay)
       if (msgs.length > 0 || currentSessionId.value === sessionId) {
-        messages.value = msgs
-        persistMessages(sessionId, msgs)
+        let finalMsgs = msgs
+        if (_pendingSessions.has(sessionId)) {
+          const lastServerMsg = msgs[msgs.length - 1]
+          // 判断最新一轮是否已经有后端回复（非 progress），因为后端只在处理完毕时保存 assistant 消息
+          if (lastServerMsg && lastServerMsg.role === 'assistant' && !lastServerMsg.isProgressMessage) {
+            // 后端已完成处理，清除 pending
+            _pendingSessions.delete(sessionId)
+          } else {
+            // 找到本地消息表中最后一条 user 消息
+            let lastUserIdx = -1
+            for (let i = messages.value.length - 1; i >= 0; i--) {
+              if (messages.value[i].role === 'user') {
+                lastUserIdx = i
+                break
+              }
+            }
+            // 只有最后一条 user 消息之后的 assistant 消息才是当前正在 pending 的消息
+            const candidateMsgs = lastUserIdx >= 0 ? messages.value.slice(lastUserIdx + 1) : messages.value
+            
+            const localMsgs = candidateMsgs.filter(m => 
+              (m.role === 'assistant' || m.isProgressMessage || m.isLoading) && 
+              !msgs.some(sm => sm.id === m.id)
+            )
+            if (localMsgs.length > 0) {
+              finalMsgs = [...msgs, ...localMsgs]
+            }
+          }
+        }
+        messages.value = finalMsgs
+        persistMessages(sessionId, finalMsgs)
       }
     } catch (e) {
       console.warn('加载消息失败:', e.message)
@@ -1015,7 +1102,13 @@ export const useSessionStore = defineStore('session', () => {
       wsSessionId.value = null
     }
 
-    isStreaming.value = false
+    if (!_pendingSessions.has(sessionId)) {
+      isStreaming.value = false
+      isSending = false
+    }
+    loadingMsgId = null
+    pendingResolve = null
+    pendingResultData = null
     wsConnecting.value = true
     wsSessionId.value = sessionId
     console.log('[connectWebSocket] 创建新连接, session_id:', wsSessionId.value)
@@ -1058,7 +1151,7 @@ export const useSessionStore = defineStore('session', () => {
         progressMessage.value = data.message
       } else if (data.type === 'chunk') {
         console.log('[WebSocket onmessage] type=chunk, result_type:', data.result_type, 'content长度:', data.content?.length)
-        isStreaming.value = false
+        // 保持 isStreaming = true，直到 done 才设为 false
         removeAssistantLoadingBubble()
         const piece =
           typeof data.content === 'string'
@@ -1195,6 +1288,8 @@ export const useSessionStore = defineStore('session', () => {
         stampLatestAssistantMessageTime()
         isStreaming.value = false
         isSending = false
+        // 清除该会话的 pending 标记（后端已完成处理）
+        if (currentSessionId.value) _pendingSessions.delete(currentSessionId.value)
         showProgressBar.value = false
         progressValue.value = 100
         progressMessage.value = '处理完成'
@@ -1294,12 +1389,18 @@ export const useSessionStore = defineStore('session', () => {
           pendingResolve = null
           pendingResultData = null
         }
+        // 最后再次加载该会话完整消息，以防部分 chunk 丢失
+        if (currentSessionId.value) {
+          loadMessages(currentSessionId.value).catch(console.error)
+        }
       } else if (data.type === 'error') {
         const errorMsg = typeof data.message === 'string' ? data.message : JSON.stringify(data.message)
         console.error('[WebSocket onmessage] type=error:', errorMsg, 'pendingResolve:', !!pendingResolve)
         removeAssistantLoadingBubble()
         isStreaming.value = false
         isSending = false
+        // 清除该会话的 pending 标记（后端已出错）
+        if (currentSessionId.value) _pendingSessions.delete(currentSessionId.value)
         showProgressBar.value = false
         if (pendingResolve) {
           pendingResolve({ success: false, error: errorMsg })
@@ -1361,6 +1462,14 @@ export const useSessionStore = defineStore('session', () => {
     ws.value.onopen = () => {
       console.log('[WebSocket] onopen - 连接已建立, session_id:', wsSessionId.value)
       wsConnecting.value = false
+    }
+
+    ws.value.onclose = () => {
+      console.log('[WebSocket onclose] 连接断开, session_id:', wsSessionId.value)
+      if (!_pendingSessions.has(wsSessionId.value)) {
+        isStreaming.value = false
+        isSending = false
+      }
     }
 
     ws.value.send = new Proxy(ws.value.send, {
@@ -1499,6 +1608,8 @@ export const useSessionStore = defineStore('session', () => {
     }
 
     isStreaming.value = true
+    // 标记该会话有正在处理的请求
+    if (sessionId) _pendingSessions.set(sessionId, true)
 
     let allFiles = [...uploadedFiles]
     let allTemplateFiles = [...uploadedTemplateFiles]
@@ -1535,6 +1646,7 @@ export const useSessionStore = defineStore('session', () => {
     } catch (e) {
       console.error('[sendMessage] 发送失败:', e)
       isStreaming.value = false
+      if (sessionId) _pendingSessions.delete(sessionId)
     }
   }
 
@@ -1635,6 +1747,7 @@ export const useSessionStore = defineStore('session', () => {
       } finally {
         isStreaming.value = false
         isSending = false
+        if (sessionId) _pendingSessions.delete(sessionId)
       }
     }
   }
@@ -1781,6 +1894,7 @@ export const useSessionStore = defineStore('session', () => {
     finalizeTableFillProgressMessage(progressMsg, result, template_files, labels)
     clearAllSelectedFiles()
     isStreaming.value = false
+    if (currentSessionId.value) _pendingSessions.delete(currentSessionId.value)
     showProgressBar.value = false
     progressValue.value = 100
   }
@@ -2135,6 +2249,7 @@ export const useSessionStore = defineStore('session', () => {
       tableFillingPreview: mixedFillPreviewData || tableFillingPreviewData,
       generated_files: mixedFillFiles.length > 0 ? mixedFillFiles : uniqueFiles,
     })
+    if (currentSessionId.value) _pendingSessions.delete(currentSessionId.value)
   }
 
   async function init() {

@@ -217,7 +217,9 @@ def get_messages(
     if not session:
         return []
     msgs = _store._messages.get(session.id, [])
-    return msgs[offset:offset + limit]
+    msgs_reversed = msgs[::-1]
+    chunk = msgs_reversed[offset:offset + limit]
+    return chunk[::-1]
 
 
 def get_session_with_messages(

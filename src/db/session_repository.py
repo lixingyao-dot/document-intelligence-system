@@ -345,22 +345,28 @@ def get_messages(
             if user_id:
                 cur.execute(
                     """
-                    SELECT id, session_id, user_id, role, content, metadata, created_at
-                    FROM messages
-                    WHERE session_id = %s AND user_id = %s::uuid
+                    SELECT * FROM (
+                        SELECT id, session_id, user_id, role, content, metadata, created_at
+                        FROM messages
+                        WHERE session_id = %s AND user_id = %s::uuid
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT %s OFFSET %s
+                    ) sub
                     ORDER BY created_at ASC, id ASC
-                    LIMIT %s OFFSET %s
                     """,
                     (session.id, user_id, lim, off),
                 )
             else:
                 cur.execute(
                     """
-                    SELECT id, session_id, user_id, role, content, metadata, created_at
-                    FROM messages
-                    WHERE session_id = %s
+                    SELECT * FROM (
+                        SELECT id, session_id, user_id, role, content, metadata, created_at
+                        FROM messages
+                        WHERE session_id = %s
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT %s OFFSET %s
+                    ) sub
                     ORDER BY created_at ASC, id ASC
-                    LIMIT %s OFFSET %s
                     """,
                     (session.id, lim, off),
                 )
